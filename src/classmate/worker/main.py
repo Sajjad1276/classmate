@@ -12,6 +12,7 @@ from classmate.core.config import get_settings
 from classmate.core.logging import configure_logging
 from classmate.db.models import ReminderJob
 from classmate.db.session import SessionFactory, dispose_engine
+from classmate.worker.wait_for_schema import wait_for_schema
 
 logger = logging.getLogger(__name__)
 MAX_ATTEMPTS = 6
@@ -90,6 +91,7 @@ async def run_worker() -> None:
     settings = get_settings()
     if not settings.bot_token:
         raise RuntimeError("BOT_TOKEN is missing.")
+    await wait_for_schema()
     bot = Bot(
         token=settings.bot_token,
         default=DefaultBotProperties(parse_mode=ParseMode.HTML),
