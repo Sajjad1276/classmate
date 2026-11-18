@@ -8,7 +8,7 @@ ClassMate uses three long-running services in one Railway project. The bot and w
 |---|---|---|---|
 | Postgres | Railway PostgreSQL template | Template-managed | Persistent application database |
 | classmate | `Sajjad1276/classmate`, branch `feat/classmate-mvp` until PR #1 is merged | `python -m classmate.bot.main` | Telegram long-polling bot |
-| classmate-worker | Same repo and branch | `python -m classmate.worker.wait_for_schema && python -m classmate.worker.main` | Durable reminder delivery worker |
+| classmate-worker | Same repo and branch | `python -m classmate.worker.main` | Durable reminder delivery worker |
 
 Both application services use the repository Dockerfile builder. Do not configure a public HTTP domain: the bot uses Telegram long polling and the worker has no inbound HTTP endpoint.
 
@@ -23,13 +23,13 @@ Set these on **both** application services:
 | `LOG_LEVEL` | `INFO` |
 | `REMINDER_POLL_SECONDS` | `5` |
 | `BOT_TOKEN` | Telegram token from BotFather; enter privately in Railway |
-| `BOOTSTRAP_ADMIN_IDS` | Comma-separated numeric Telegram user IDs that may create the first school |
+| `BOOTSTRAP_ADMIN_IDS` | On the `classmate` bot only: comma-separated numeric Telegram user IDs that may create the first school |
 
 Never commit real tokens, passwords or connection strings. Do not paste them into source code, issues or chat messages.
 
 ## Migration ordering
 
-Only the `classmate` bot service runs `alembic upgrade head` as its pre-deploy command. The worker waits until the database's `alembic_version` matches the repository's Alembic head before starting. This avoids two services racing to apply the same migration.
+Only the `classmate` bot service runs `alembic upgrade head` as its pre-deploy command. The worker entry point calls the schema-readiness check and waits until the database's `alembic_version` matches the repository's Alembic head before starting its polling loop. This avoids two services racing to apply the same migration.
 
 The migration runs on every bot deployment; `upgrade head` is safe to repeat for an already-current database. Keep schema changes in new Alembic revisions. Do not edit an already-applied migration.
 
@@ -38,7 +38,7 @@ The migration runs on every bot deployment; `upgrade head` is safe to repeat for
 1. Confirm the PostgreSQL service reports a healthy/successful deployment and has its persistent volume mounted at `/var/lib/postgresql/data`.
 2. Attach the application services to this repository and the intended branch.
 3. Set the non-secret values above on both services.
-4. Add `BOT_TOKEN` and `BOOTSTRAP_ADMIN_IDS` privately in Railway Variables on both services.
+4. Add `BOT_TOKEN` privately on both application services. Add `BOOTSTRAP_ADMIN_IDS` on the `classmate` bot service only.
 5. Deploy the bot. Confirm its pre-deploy migration succeeds and its runtime stays healthy.
 6. Deploy the worker; it should pass the schema-head wait and then remain running.
 7. Open a private chat with the bot and send `/start`. Create a school and class using the commands in the root README.
