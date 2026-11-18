@@ -47,7 +47,7 @@ The local Compose stack starts PostgreSQL, applies Alembic migrations, then runs
 - /class_manager_add class_id | telegram_id — appoint a class manager (school admin).
 - /reminders_off class_id [homework|exams|all] — disable private reminders; /reminders_on re-enables them.
 - /pending — pending submissions for trusted approvers.
-- /ask تکلیف نگارش — deterministic keyword-based search.
+- /ask تکلیف نگارش — deterministic keyword-based search.\n- /ask برای جلسه بعد نگارش چی داریم؟ — resolve the next scheduled lesson from the class timetable and list approved homework due for that lesson.
 - /approver_add class_id | telegram_id — grant trusted approver access.
 
 For private-chat queries that need a class ID, pass it after the command, for example /homework 12.
@@ -68,4 +68,4 @@ For private-chat queries that need a class ID, pass it after the command, for ex
 
 ## Current MVP limitations
 
-Timetable entry management is available through /timetable_set. Record editing/revision UI, a web dashboard, attendance/grades, advanced analytics and richer notification schedules are follow-up tasks. FSM form state is in-memory, while submitted records and reminder jobs are durable in PostgreSQL.
+Timetable entry management is available through /timetable_set. The next-session resolver uses the next future weekday occurrence in the timetable (08:00 when a period has no start time); holidays and one-off timetable changes are not automatically inferred. Record editing/revision UI, a web dashboard, attendance/grades, advanced analytics and richer notification schedules are follow-up tasks. FSM form state is in-memory, while submitted records and reminder jobs are durable in PostgreSQL.

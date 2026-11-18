@@ -145,7 +145,10 @@ class TimetableEntry(TimestampMixin, Base):
 
 class LessonSession(TimestampMixin, Base):
     __tablename__ = "lesson_sessions"
-    __table_args__ = (Index("ix_lesson_class_start", "class_id", "starts_at"),)
+    __table_args__ = (
+        Index("ix_lesson_class_start", "class_id", "starts_at"),
+        UniqueConstraint("class_id", "subject_id", "starts_at", name="uq_lesson_class_subject_start"),
+    )
 
     id: Mapped[int] = mapped_column(Integer, primary_key=True)
     class_id: Mapped[int] = mapped_column(ForeignKey("classes.id", ondelete="CASCADE"))

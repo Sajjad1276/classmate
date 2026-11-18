@@ -32,11 +32,11 @@ The initial migration bootstraps metadata; future migrations should be generated
 
 ## Telegram update processing
 
-The bot uses long polling and Telegram Privacy Mode remains enabled. Group commands, mentions/replies to the bot and inline callbacks are supported; the bot does not ingest arbitrary private group conversations.
+The bot uses long polling and Telegram Privacy Mode remains enabled. During group binding, the bot must be a Telegram administrator so it can reliably verify that the command issuer is a group administrator; it does not require message deletion or member-ban privileges. Group commands, mentions/replies to the bot and inline callbacks are supported; the bot does not ingest arbitrary private group conversations.
 
 FSM state currently uses in-memory storage. A bot restart can interrupt an unfinished form, but never destroys submitted records or reminders. Redis-backed FSM storage can be added if persistent wizard continuity is required.
 
-## Invitation codes\n\nGroup-link codes are stored as SHA-256 hashes and expire after 30 minutes; a successful group connection consumes the code. Student join codes are reusable for seven days. Expired codes are rejected at query time.\n\n## Reminder worker
+## Invitation codes\n\nGroup-link codes are stored as SHA-256 hashes and expire after 30 minutes; a successful group connection consumes the code. Student join codes are reusable for seven days. Expired codes are rejected at query time.\n\n## Next-lesson resolver\n\nThe resolver reads a class's timetable entries for a subject, evaluates the next future weekday/time in the school's timezone and creates/reuses a LessonSession row. Homework may reference that session through due_session_id and also stores the local due date for reminders. The deterministic /ask flow recognizes next-session phrasing and returns approved work linked to that session or due on the same local date. This does not infer holidays or exceptional schedule changes.\n\n## Reminder worker
 
 Workers claim due reminder rows via PostgreSQL FOR UPDATE SKIP LOCKED, set a processing lease, send, then mark success or schedule exponential retry. Expired leases are recovered after worker crashes. The queue is durable and independent of the bot process.
 

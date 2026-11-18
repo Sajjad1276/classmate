@@ -56,8 +56,10 @@ from classmate.services.records import (
     create_homework,
     get_group_context,
     get_subject,
+    get_or_create_next_lesson,
     list_exams,
     list_homework,
+    list_homework_for_lesson,
     list_pending_records,
     list_reports,
     normalize_subject_name,
@@ -903,31 +905,71 @@ async def wizard_homework_description(message: Message, state: FSMContext):
         return
     await state.update_data(description=description)
     await state.set_state(RecordWizard.homework_due)
-    await message.answer("موعد تحویل را به شکل ۱۴۰۵/۰۸/۲۷ وارد کن؛ برای نامشخص «-» بنویس.")
+    await message.answer(
+        "موعد تحویل را به شکل ۱۴۰۵/۰۸/۲۷ وارد کن؛ "
+        "برای جلسه بعد «جلسه بعد» و برای نامشخص «-» بنویس."
+    )
 
 
 @router.message(RecordWizard.homework_due)
 async def wizard_homework_due(message: Message, state: FSMContext, bot: Bot):
     raw = (message.text or "").strip()
-    try:
-        due_on = None if raw == "-" else parse_school_date(raw)
-    except ValueError as exc:
-        await message.answer(str(exc))
-        return
     data = await state.get_data()
     title, description = data["title"], data["description"]
     subject_id = data["subject_id"]
+    next_session_values = {"جلسه بعد", "جلسه بعدی", "جلسه آینده", "جلسه ی آینده"}
+    due_session_id = None
+
+    if normalize_subject_name(raw) in {
+        normalize_subject_name(item) for item in next_session_values
+    }:
+        async with SessionFactory() as session:
+            async with session.begin():
+                lesson = await get_or_create_next_lesson(
+                    session,
+                    data["class_id"],
+                    subject_id,
+                    data["timezone"],
+                )
+                if lesson is None:
+                    await message.answer(
+                        "برای این درس جلسه آینده پیدا نشد. مدیر کلاس باید ابتدا "
+                        "برنامه هفتگی را با /timetable_set ثبت کند."
+                    )
+                    return
+                due_session_id = lesson.id
+                due_on = lesson.starts_at.astimezone(ZoneInfo(data["timezone"])).date()
+                due_text = f"جلسه بعد ({jalali_datetime(lesson.starts_at, data['timezone'])})"
+    else:
+        try:
+            due_on = None if raw == "-" else parse_school_date(raw)
+        except ValueError as exc:
+            await message.answer(str(exc))
+            return
+        due_text = jalali_date(due_on) if due_on else "نامشخص"
 
     async def create(session, user):
         subject = await session.get(Subject, subject_id)
         return await create_homework(
-            session, data["class_id"], subject, title, description, due_on, user.id
+            session,
+            data["class_id"],
+            subject,
+            title,
+            description,
+            due_on,
+            user.id,
+            due_session_id=due_session_id,
         )
 
-    due_text = jalali_date(due_on) if due_on else "نامشخص"
     await _submit_pending(
-        bot, message.chat.id, message.from_user, state, "homework",
-        title, f"{description} | موعد: {due_text}", create,
+        bot,
+        message.chat.id,
+        message.from_user,
+        state,
+        "homework",
+        title,
+        f"{description} | موعد: {due_text}",
+        create,
     )
 
 
@@ -1304,9 +1346,10 @@ async def week_command(message: Message):
 
 @router.message(Command("ask"))
 async def ask_command(message: Message):
-    query_text = message.text.split(maxsplit=1)[1].strip() if len(message.text.split(maxsplit=1)) > 1 else ""
+    parts = (message.text or "").split(maxsplit=1)
+    query_text = parts[1].strip() if len(parts) > 1 else ""
     if not query_text:
-        await message.answer("نمونه: /ask تکلیف نگارش")
+        await message.answer("نمونه: /ask برای جلسه بعد نگارش چی داریم؟")
         return
     class_id = None
     if message.chat.type == "private":
@@ -1318,7 +1361,9 @@ async def ask_command(message: Message):
             return
     async with SessionFactory() as session:
         async with session.begin():
-            user = await _user(session, message.from_user, private=message.chat.type == "private")
+            user = await _user(
+                session, message.from_user, private=message.chat.type == "private"
+            )
             if message.chat.type in {"group", "supergroup"}:
                 context = await get_group_context(session, message.chat.id)
             else:
@@ -1332,11 +1377,73 @@ async def ask_command(message: Message):
                 rows = await list_exams(session, class_group.id)
                 answer = _format_exams(rows, school.timezone)
             else:
-                subject = normalized
-                for prefix in ("تکلیف", "برای جلسه بعد", "چی داریم", "درس"):
-                    subject = subject.replace(prefix, "").strip()
-                rows = await list_homework(session, class_group.id, subject or None)
-                answer = _format_homework(rows)
+                next_session_phrases = (
+                    "برای جلسه آینده",
+                    "برای جلسه بعدی",
+                    "برای جلسه بعد",
+                    "جلسه آینده",
+                    "جلسه بعدی",
+                    "جلسه بعد",
+                )
+                asks_next_session = any(
+                    phrase in normalized for phrase in next_session_phrases
+                )
+                subject_query = normalized
+                for phrase in (
+                    *next_session_phrases,
+                    "چی داریم",
+                    "چه داریم",
+                    "چه تکلیفی داریم",
+                    "تکلیف",
+                    "درس",
+                ):
+                    subject_query = subject_query.replace(phrase, " ")
+                for punctuation in ("؟", "?", "!", "،", ",", ":", ";", "."):
+                    subject_query = subject_query.replace(punctuation, " ")
+                subject_query = " ".join(subject_query.split())
+
+                if asks_next_session:
+                    subject = await get_subject(
+                        session, class_group.id, school.id, subject_query
+                    )
+                    if subject is None:
+                        answer = (
+                            "نام درس را از فهرست درس‌های این کلاس تشخیص ندادم. "
+                            "نمونه: /ask برای جلسه بعد نگارش چی داریم؟"
+                        )
+                    else:
+                        lesson = await get_or_create_next_lesson(
+                            session, class_group.id, subject.id, school.timezone
+                        )
+                        if lesson is None:
+                            answer = (
+                                f"برای درس {escape(subject.name)} جلسه آینده‌ای پیدا نشد. "
+                                "مدیر کلاس باید برنامه هفتگی را با /timetable_set ثبت کند."
+                            )
+                        else:
+                            lesson_time = jalali_datetime(
+                                lesson.starts_at, school.timezone
+                            )
+                            rows = await list_homework_for_lesson(
+                                session, class_group.id, subject.id, lesson
+                            )
+                            if rows:
+                                answer = (
+                                    f"📅 <b>جلسه بعد {escape(subject.name)}</b>\n"
+                                    f"زمان: {lesson_time}\n\n"
+                                    f"{_format_homework(rows)}"
+                                )
+                            else:
+                                answer = (
+                                    f"📅 <b>جلسه بعد {escape(subject.name)}</b>\n"
+                                    f"زمان: {lesson_time}\n"
+                                    "فعلاً تکلیف تأییدشده‌ای برای این جلسه ثبت نشده است."
+                                )
+                else:
+                    rows = await list_homework(
+                        session, class_group.id, subject_query or None
+                    )
+                    answer = _format_homework(rows)
     await message.answer(
         answer + "\n\n<i>پاسخ بر اساس اطلاعات تأییدشده ثبت‌شده در این کلاس است.</i>"
     )

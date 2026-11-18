@@ -1,4 +1,4 @@
-from datetime import date, datetime
+from datetime import date, datetime, time, timedelta
 from zoneinfo import ZoneInfo
 
 from sqlalchemy import select
@@ -13,10 +13,13 @@ from classmate.db.models import (
     DailyReport,
     Exam,
     Homework,
+    LessonSession,
     ReminderJob,
     School,
     Subject,
+    TimetableEntry,
 )
+from classmate.domain.dates import persian_weekday
 
 
 def normalize_subject_name(value: str) -> str:
@@ -55,6 +58,95 @@ async def get_subject(
     )
 
 
+
+async def get_or_create_next_lesson(
+    session: AsyncSession,
+    class_id: int,
+    subject_id: int,
+    timezone_name: str,
+) -> LessonSession | None:
+    """Resolve the next future occurrence of a subject from the class timetable."""
+    zone = ZoneInfo(timezone_name)
+    now = datetime.now(zone)
+    entries = (
+        await session.execute(
+            select(TimetableEntry).where(
+                TimetableEntry.class_id == class_id,
+                TimetableEntry.subject_id == subject_id,
+            )
+        )
+    ).scalars().all()
+
+    occurrences: list[tuple[datetime, datetime | None]] = []
+    for entry in entries:
+        for offset in range(15):
+            lesson_date = now.date() + timedelta(days=offset)
+            if persian_weekday(lesson_date) != entry.weekday:
+                continue
+            if entry.valid_from and lesson_date < entry.valid_from:
+                continue
+            if entry.valid_until and lesson_date > entry.valid_until:
+                continue
+            lesson_start = datetime.combine(
+                lesson_date, entry.starts_at or time(8, 0), tzinfo=zone
+            )
+            if lesson_start <= now:
+                continue
+            lesson_end = (
+                datetime.combine(lesson_date, entry.ends_at, tzinfo=zone)
+                if entry.ends_at
+                else None
+            )
+            occurrences.append((lesson_start, lesson_end))
+            break
+
+    if not occurrences:
+        return None
+
+    starts_at, ends_at = min(occurrences, key=lambda item: item[0])
+    existing = await session.scalar(
+        select(LessonSession).where(
+            LessonSession.class_id == class_id,
+            LessonSession.subject_id == subject_id,
+            LessonSession.starts_at == starts_at,
+        )
+    )
+    if existing is not None:
+        return existing
+
+    lesson = LessonSession(
+        class_id=class_id,
+        subject_id=subject_id,
+        starts_at=starts_at,
+        ends_at=ends_at,
+        status="scheduled",
+    )
+    session.add(lesson)
+    await session.flush()
+    return lesson
+
+
+async def list_homework_for_lesson(
+    session: AsyncSession, class_id: int, subject_id: int, lesson: LessonSession
+) -> list[tuple[Homework, Subject]]:
+    return list(
+        (
+            await session.execute(
+                select(Homework, Subject)
+                .join(Subject, Homework.subject_id == Subject.id)
+                .where(
+                    Homework.class_id == class_id,
+                    Homework.subject_id == subject_id,
+                    Homework.status == "APPROVED",
+                    (Homework.due_session_id == lesson.id)
+                    | (Homework.due_on == lesson.starts_at.date()),
+                )
+                .order_by(Homework.created_at.desc())
+            )
+        ).all()
+    )
+
+
 async def add_subject(
     session: AsyncSession, class_id: int, school_id: int, name: str
 ) -> Subject:
@@ -88,6 +180,7 @@ async def create_homework(
     description: str,
     due_on: date | None,
     created_by: int,
+    due_session_id: int | None = None,
 ) -> Homework:
     record = Homework(
         class_id=class_id,
@@ -95,6 +188,7 @@ async def create_homework(
         title=title.strip()[:180],
         description=description.strip(),
         due_on=due_on,
+        due_session_id=due_session_id,
         created_by=created_by,
         status="PENDING",
     )

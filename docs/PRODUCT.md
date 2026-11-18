@@ -28,7 +28,7 @@ The submitter cannot approve their own record.
 4. Daily reports, homework and exams.
 5. Pending -> approved/rejected workflow with actor and timestamps.
 6. Approved-only list/query endpoints in Telegram.
-7. Timetable data model, manager-controlled slot editing and weekly display.
+7. Timetable data model, manager-controlled slot editing, weekly display and next-lesson resolution by subject. Homework can be assigned to a specific next lesson.
 8. Durable group/private reminder jobs.
 9. Audit log and tenant-scoped access checks.\n10. School-admin and class-manager assignment flows.\n11. Per-class private reminder preferences.
 
@@ -38,7 +38,7 @@ States: PENDING, APPROVED, REJECTED, REVISION_REQUESTED, CANCELLED and EXPIRED.
 
 Only approved records appear in the normal class lists and deterministic answers. Updates must become new auditable events; destructive silent overwrites are not supported in the MVP.
 
-## Reminder semantics
+## Next-lesson semantics\n\nThe bot resolves the next future occurrence of a subject from the class's weekly timetable, respecting its weekday, start/end time and optional validity range. If a period has no start time, 08:00 is used as a display/scheduling fallback. Homework can be assigned to that occurrence by entering «جلسه بعد» in the due-date step. Holiday calendars and exceptional one-off timetable changes are not inferred by the MVP; a manager must update the timetable.\n\n## Reminder semantics
 
 - Exams: default reminders 24 hours and 1 hour before.
 - Homework: default reminder at 18:00 on the day before its due date.
