@@ -63,6 +63,7 @@ For private-chat queries that need a class ID, pass it after the command, for ex
 
 ## Project docs
 
+- Command guide: docs/COMMANDS.md
 - Product specification: docs/PRODUCT.md
 - Architecture: docs/ARCHITECTURE.md
 - Railway deployment preparation: docs/RAILWAY.md
