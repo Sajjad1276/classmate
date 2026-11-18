@@ -17,6 +17,7 @@ from classmate.bot.keyboards import (
     new_record_menu,
     subject_picker,
 )
+from classmate.bot.command_menu import sync_private_command_menu
 from classmate.bot.states import RecordWizard
 from classmate.core.config import get_settings
 from classmate.db.models import (
@@ -208,12 +209,49 @@ def _parse_pipe_args(raw: str, count: int) -> list[str]:
 
 
 @router.message(CommandStart())
-async def start(message: Message, state: FSMContext):
+async def start(message: Message, state: FSMContext, bot: Bot):
     await state.clear()
+    role_flags = None
     async with SessionFactory() as session:
         async with session.begin():
             user = await _user(session, message.from_user, private=message.chat.type == "private")
             platform_admin = user.is_platform_admin
+            if message.chat.type == "private":
+                school_admin = platform_admin or (
+                    await session.scalar(
+                        select(SchoolMembership.id).where(
+                            SchoolMembership.user_id == user.id,
+                            SchoolMembership.role == "school_admin",
+                            SchoolMembership.is_active.is_(True),
+                        )
+                    )
+                ) is not None
+                class_roles = set(
+                    (
+                        await session.scalars(
+                            select(ClassMembership.role).where(
+                                ClassMembership.user_id == user.id,
+                                ClassMembership.is_active.is_(True),
+                            )
+                        )
+                    ).all()
+                )
+                class_manager = "class_manager" in class_roles
+                approver = (
+                    school_admin
+                    or class_manager
+                    or "trusted_approver" in class_roles
+                )
+                role_flags = (school_admin, class_manager, approver)
+    if message.chat.type == "private" and role_flags is not None:
+        await sync_private_command_menu(
+            bot,
+            message.chat.id,
+            is_platform_admin=platform_admin,
+            is_school_admin=role_flags[0],
+            is_class_manager=role_flags[1],
+            is_approver=role_flags[2],
+        )
     greeting = f"سلام {escape(message.from_user.first_name or '')} 👋\n"
     greeting += (
         "به ClassMate خوش آمدی. اینجا اطلاعات کلاس‌ها، تکالیف، امتحانات و گزارش‌ها "
@@ -230,6 +268,9 @@ async def help_command(message: Message):
     await message.answer(
         "<b>راهنمای ClassMate</b>\n"
         "/start — منوی اصلی\n"
+        "/classes — فهرست کلاس‌های من\n"
+        "/cancel — لغو فرم ثبت نیمه‌کاره\n"
+\n"
         "/school_new نام مدرسه | سال تحصیلی [| منطقه زمانی] — ساخت مدرسه (مدیر کل)\n"
         "/class_new شناسه مدرسه | پایه | کلاس/شعبه | نام کلاس — ساخت کلاس\n"
         "/school_admin_add شناسه مدرسه | شناسه تلگرام — تعیین مدیر مدرسه (مدیر کل)\n"
@@ -251,6 +292,44 @@ async def help_command(message: Message):
         "/approver_add شناسه کلاس | شناسه تلگرام — افزودن تأییدکننده",
         reply_markup=main_menu(),
     )
+
+
+@router.message(Command("classes"))
+async def classes_command(message: Message):
+    if message.chat.type != "private":
+        await message.answer("برای دیدن فهرست کلاس‌ها، /classes را در گفت‌وگوی خصوصی ربات اجرا کن.")
+        return
+    async with SessionFactory() as session:
+        async with session.begin():
+            user = await _user(session, message.from_user, private=True)
+            classes = await _classes_for_user(session, user)
+            rows = []
+            for item in classes:
+                context = await get_class_with_school(session, item.id)
+                school_name = context[2].name if context else "مدرسه نامشخص"
+                membership = await session.scalar(
+                    select(ClassMembership).where(
+                        ClassMembership.class_id == item.id,
+                        ClassMembership.user_id == user.id,
+                        ClassMembership.is_active.is_(True),
+                    )
+                )
+                if membership and membership.role == "class_manager":
+                    role_label = "مدیر کلاس"
+                elif membership and membership.role == "trusted_approver":
+                    role_label = "فرد مورد اعتماد"
+                elif membership:
+                    role_label = "دانش‌آموز"
+                else:
+                    role_label = "مدیر مدرسه/سامانه"
+                rows.append(
+                    f"• <b>{escape(item.name)}</b> — {escape(school_name)}\n"
+                    f"  شناسه: <code>{item.id}</code> | نقش: {role_label}"
+                )
+    if not rows:
+        await message.answer("هنوز به کلاسی متصل نیستی. برای عضویت، ابتدا /start و سپس /join کد_عضویت را اجرا کن.")
+        return
+    await message.answer("🏫 <b>کلاس‌های قابل‌دسترسی تو</b>\n\n" + "\n".join(rows))
 
 
 @router.callback_query(F.data == "menu:home")
@@ -886,6 +965,16 @@ async def _submit_pending(
     )
 
 
+@router.message(Command("cancel"))
+async def cancel_command(message: Message, state: FSMContext):
+    current_state = await state.get_state()
+    if current_state is None:
+        await message.answer("فرایند فعالی برای لغو وجود ندارد.")
+        return
+    await state.clear()
+    await message.answer("فرایند ثبت لغو شد و اطلاعات نیمه‌کاره ذخیره نشد.")
+
+
 @router.message(RecordWizard.homework_title)
 async def wizard_homework_title(message: Message, state: FSMContext):
     title = (message.text or "").strip()
@@ -1156,7 +1245,6 @@ async def homework_command(message: Message):
         subject_name = parts[1]
     async with SessionFactory() as session:
         async with session.begin():
-            user = await _user(session, message.from_user, private=message.chat.type == "private")
             user = await _user(session, message.from_user, private=message.chat.type == "private")
             context = await _class_from_message(session, message, class_id, user)
             if not context:
