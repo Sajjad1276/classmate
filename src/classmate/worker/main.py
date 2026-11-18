@@ -89,11 +89,14 @@ async def finish_job(job_id: int, error: str | None = None, attempts: int = 1) -
 async def run_worker() -> None:
     configure_logging()
     settings = get_settings()
-    if not settings.bot_token:
-        raise RuntimeError("BOT_TOKEN is missing.")
+    token = settings.bot_token.strip()
+    if not token or token.startswith("SET_ME__"):
+        raise RuntimeError(
+            "BOT_TOKEN is not configured. Replace the Railway placeholder with a token from @BotFather."
+        )
     await wait_for_schema()
     bot = Bot(
-        token=settings.bot_token,
+        token=token,
         default=DefaultBotProperties(parse_mode=ParseMode.HTML),
     )
     logger.info("ClassMate reminder worker started")
