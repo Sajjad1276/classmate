@@ -14,10 +14,13 @@ from classmate.core.logging import configure_logging
 async def main() -> None:
     configure_logging()
     settings = get_settings()
-    if not settings.bot_token:
-        raise RuntimeError("BOT_TOKEN is missing. Copy .env.example to .env and set BOT_TOKEN.")
+    token = settings.bot_token.strip()
+    if not token or token.startswith("SET_ME__"):
+        raise RuntimeError(
+            "BOT_TOKEN is not configured. Replace the Railway placeholder with a token from @BotFather."
+        )
     bot = Bot(
-        token=settings.bot_token,
+        token=token,
         default=DefaultBotProperties(parse_mode=ParseMode.HTML),
     )
     dispatcher = Dispatcher(storage=MemoryStorage())
