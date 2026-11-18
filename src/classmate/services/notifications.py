@@ -1,4 +1,4 @@
-from datetime import datetime, timedelta
+from datetime import datetime, time, timedelta
 from html import escape
 from zoneinfo import ZoneInfo
 
