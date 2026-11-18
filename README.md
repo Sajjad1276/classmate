@@ -47,7 +47,8 @@ The local Compose stack starts PostgreSQL, applies Alembic migrations, then runs
 - /class_manager_add class_id | telegram_id — appoint a class manager (school admin).
 - /reminders_off class_id [homework|exams|all] — disable private reminders; /reminders_on re-enables them.
 - /pending — pending submissions for trusted approvers.
-- /ask تکلیف نگارش — deterministic keyword-based search.\n- /ask برای جلسه بعد نگارش چی داریم؟ — resolve the next scheduled lesson from the class timetable and list approved homework due for that lesson.
+- /ask تکلیف نگارش — deterministic keyword-based search.
+- /ask برای جلسه بعد نگارش چی داریم؟ — resolve the next scheduled lesson from the class timetable and list approved homework due for that lesson.
 - /approver_add class_id | telegram_id — grant trusted approver access.
 
 For private-chat queries that need a class ID, pass it after the command, for example /homework 12.
