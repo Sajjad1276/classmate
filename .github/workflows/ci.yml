@@ -30,6 +30,10 @@ jobs:
           cache: pip
       - run: pip install -r requirements-dev.txt
       - run: ruff check src tests
+      - name: Apply database migrations
+        run: alembic upgrade head
+        env:
+          DATABASE_URL: postgresql+asyncpg://classmate:classmate@localhost:5432/classmate
       - run: pytest -q
         env:
           DATABASE_URL: postgresql+asyncpg://classmate:classmate@localhost:5432/classmate
