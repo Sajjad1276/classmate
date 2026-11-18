@@ -37,13 +37,13 @@ GROUP_COMMANDS = [
     BotCommand(command="week", description="نمایش برنامه هفتگی"),
     BotCommand(command="ask", description="جست‌وجو در اطلاعات کلاس"),
     BotCommand(command="pending", description="صف موارد نیازمند تأیید"),
+    BotCommand(command="subject_add", description="افزودن درس به کلاس"),
+    BotCommand(command="timetable_set", description="ثبت یا تغییر یک زنگ برنامه"),
     BotCommand(command="cancel", description="لغو فرایند ثبت جاری"),
 ]
 
 GROUP_ADMIN_COMMANDS = GROUP_COMMANDS + [
     BotCommand(command="connect", description="اتصال این گروه به یک کلاس"),
-    BotCommand(command="subject_add", description="افزودن درس به کلاس"),
-    BotCommand(command="timetable_set", description="ثبت یا تغییر یک زنگ برنامه"),
 ]
 
 
