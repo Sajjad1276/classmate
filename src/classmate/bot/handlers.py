@@ -444,7 +444,7 @@ async def group_menu_action(callback: CallbackQuery, bot: Bot):
                         + f": {escape(subject.name)}"
                         for entry, subject in entries
                     ]
-                    answer = "📅 <b>برنامه هفتگی</b>\\n" + "\\n".join(rows)
+                    answer = "📅 <b>برنامه هفتگی</b>\n" + "\n".join(rows)
             elif action == "today":
                 zone = ZoneInfo(school.timezone)
                 local_date = datetime.now(zone).date()
@@ -454,15 +454,15 @@ async def group_menu_action(callback: CallbackQuery, bot: Bot):
                 parts = [f"🗓 <b>خلاصه امروز — {jalali_date(local_date)}</b>"]
                 if reports:
                     parts.extend(
-                        f"🗒 <b>{escape(report.title or 'گزارش روزانه')}</b>\\n"
-                        f"{jalali_date(report.report_date)}\\n{escape(report.body)}"
+                        f"🗒 <b>{escape(report.title or 'گزارش روزانه')}</b>\n"
+                        f"{jalali_date(report.report_date)}\n{escape(report.body)}"
                         for report in reports
                     )
                 else:
                     parts.append("🗒 گزارش تأییدشده‌ای برای امروز ثبت نشده است.")
                 parts.append(_format_homework(homework_rows))
                 parts.append(_format_exams(exam_rows, school.timezone))
-                answer = "\\n\\n".join(parts)
+                answer = "\n\n".join(parts)
             else:
                 await callback.answer("این گزینه شناخته‌شده نیست.", show_alert=True)
                 return
@@ -478,7 +478,7 @@ async def group_menu_action(callback: CallbackQuery, bot: Bot):
                     getattr(record, "body", getattr(record, "scope", "")),
                 )
                 await callback.message.answer(
-                    f"🕓 <b>{escape(kind)} #{record.id} — {escape(title)}</b>\\n"
+                    f"🕓 <b>{escape(kind)} #{record.id} — {escape(title)}</b>\n"
                     f"{escape(details[:1200])}",
                     reply_markup=approval_keyboard(kind, record.id),
                 )
@@ -486,7 +486,7 @@ async def group_menu_action(callback: CallbackQuery, bot: Bot):
                 await callback.message.answer("فقط ۸ مورد نخست صف بررسی نمایش داده شد.")
     else:
         await callback.message.answer(
-            f"🏫 <b>{escape(class_name)}</b>\\n\\n{answer}"
+            f"🏫 <b>{escape(class_name)}</b>\n\n{answer}"
         )
     await callback.answer()
 
