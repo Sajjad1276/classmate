@@ -482,6 +482,9 @@ async def _show_class_action(
                     [button("🔑 ساخت کد عضویت", f"v2:manage:invite:{class_id}")],
                     [button("🔗 اتصال گروه کلاس", f"v2:manage:group:{class_id}")],
                     [button("📘 افزودن درس", f"v2:manage:subject:{class_id}")],
+                    [button("👤 تعیین مدیر کلاس", f"v2:manage:manager:{class_id}")],
+                    [button("🗓 تنظیم برنامه هفتگی", f"v2:manage:timetable:{class_id}")],
+                    [button("🚫 لغو تکلیف یا امتحان", f"v2:manage:cancel:{class_id}")],
                 ]
                 body = f"⚙️ <b>مدیریت {html(class_group.name)}</b>\nعملیات مدیریتی را انتخاب کن."
                 await _edit(target, state, body, menu(rows, f"v2:class:open:{class_id}"))
@@ -1003,6 +1006,146 @@ async def review_callback(callback: CallbackQuery, state: FSMContext, bot: Bot) 
         await callback.answer(str(exc), show_alert=True)
 
 
+@router.callback_query(F.data.startswith("v2:timetable:subject:"))
+async def timetable_subject_callback(callback: CallbackQuery, state: FSMContext) -> None:
+    try:
+        _, _, _, class_id_raw, subject_id_raw = callback.data.split(":")
+        class_id, subject_id = int(class_id_raw), int(subject_id_raw)
+        if class_id < 1 or subject_id < 1:
+            raise ValueError
+    except (ValueError, TypeError):
+        await callback.answer("انتخاب درس معتبر نیست.", show_alert=True)
+        return
+    user = await _load_user_from_callback(callback)
+    try:
+        async with SessionFactory() as session:
+            async with session.begin():
+                subjects = await list_subjects(session, user, class_id)
+                if subject_id not in {item.id for item in subjects}:
+                    raise Forbidden("این درس به کلاس انتخاب‌شده تعلق ندارد.")
+        await _begin_flow(
+            callback,
+            state,
+            flow="timetable_create",
+            step="weekday",
+            prompt="روز هفته را بنویس؛ مثلاً شنبه، یکشنبه یا عدد ۰ تا ۶ (شنبه=۰).",
+            class_id=class_id,
+            subject_id=subject_id,
+            back=f"v2:class:open:{class_id}",
+        )
+    except DomainError as exc:
+        await callback.answer(str(exc), show_alert=True)
+
+
+@router.callback_query(F.data.startswith("v2:cancel:confirm:"))
+async def cancel_record_confirm_callback(
+    callback: CallbackQuery, state: FSMContext
+) -> None:
+    try:
+        _, _, _, kind, class_id_raw, record_id_raw = callback.data.split(":")
+        record_type = RecordType(kind)
+        class_id, record_id = int(class_id_raw), int(record_id_raw)
+        model = {
+            RecordType.HOMEWORK: Homework,
+            RecordType.EXAM: Exam,
+        }[record_type]
+    except (ValueError, TypeError, KeyError):
+        await callback.answer("درخواست لغو نامعتبر است.", show_alert=True)
+        return
+    user = await _load_user_from_callback(callback)
+    try:
+        async with SessionFactory() as session:
+            async with session.begin():
+                await require_class_access(session, user, class_id)
+                if record_type == RecordType.HOMEWORK:
+                    row = await session.execute(
+                        select(Homework, Subject)
+                        .join(Subject, Subject.id == Homework.subject_id)
+                        .where(
+                            Homework.id == record_id,
+                            Homework.class_id == class_id,
+                            Homework.status == "APPROVED",
+                        )
+                    )
+                else:
+                    row = await session.execute(
+                        select(Exam, Subject)
+                        .join(Subject, Subject.id == Exam.subject_id)
+                        .where(
+                            Exam.id == record_id,
+                            Exam.class_id == class_id,
+                            Exam.status == "APPROVED",
+                        )
+                    )
+                selected = row.first()
+        if selected is None:
+            raise DomainError("رکورد فعال و تأییدشده پیدا نشد.")
+        item, subject = selected
+        label = "تکلیف" if record_type == RecordType.HOMEWORK else "امتحان"
+        due = (
+            f"موعد: {jalali_date(item.due_on)}"
+            if record_type == RecordType.HOMEWORK and item.due_on
+            else (
+                f"زمان: {jalali_datetime(item.scheduled_at, get_settings().default_timezone)}"
+                if record_type == RecordType.EXAM
+                else "بدون موعد"
+            )
+        )
+        rows = [[
+            button("بله، لغو شود", f"v2:cancel:do:{kind}:{class_id}:{record_id}"),
+            button("خیر، بازگشت", f"v2:action:manage:{class_id}"),
+        ]]
+        await _edit(
+            callback,
+            state,
+            f"⚠️ <b>تأیید لغو {label}</b>\\n"
+            f"درس: {html(subject.name)}\\n"
+            f"عنوان: {html(item.title)}\\n"
+            f"{due}\\n\\n"
+            "رکورد حذف نمی‌شود؛ از فهرست فعال کنار می‌رود و یادآوری‌های آینده لغو می‌شوند.",
+            InlineKeyboardMarkup(inline_keyboard=rows),
+        )
+    except DomainError as exc:
+        await callback.answer(str(exc), show_alert=True)
+
+
+@router.callback_query(F.data.startswith("v2:cancel:do:"))
+async def cancel_record_execute_callback(
+    callback: CallbackQuery, state: FSMContext, bot: Bot
+) -> None:
+    try:
+        _, _, _, kind, class_id_raw, record_id_raw = callback.data.split(":")
+        record_type = RecordType(kind)
+        class_id, record_id = int(class_id_raw), int(record_id_raw)
+    except (ValueError, TypeError):
+        await callback.answer("درخواست لغو نامعتبر است.", show_alert=True)
+        return
+    user = await _load_user_from_callback(callback)
+    try:
+        async with SessionFactory() as session:
+            async with session.begin():
+                record = await cancel_record(
+                    session, user, class_id, record_type, record_id
+                )
+                class_group, _, school = await require_class_access(
+                    session, user, class_id
+                )
+                group_id = class_group.group_chat_id
+        await callback.answer("رکورد لغو شد.")
+        if group_id:
+            label = "تکلیف" if record_type == RecordType.HOMEWORK else "امتحان"
+            try:
+                await bot.send_message(
+                    group_id,
+                    f"🚫 یک {label} تأییدشده لغو شد؛ یادآوری‌های آینده متوقف شدند.",
+                )
+            except TelegramAPIError:
+                logger.exception("Could not announce cancelled record %s.", record_id)
+        await _show_class_action(callback, state, user, "manage", class_id)
+    except DomainError as exc:
+        await callback.answer(str(exc), show_alert=True)
+
+
 @router.callback_query(F.data.startswith("v2:manage:"))
 async def manage_callback(callback: CallbackQuery, state: FSMContext) -> None:
     try:
@@ -1038,6 +1181,61 @@ async def manage_callback(callback: CallbackQuery, state: FSMContext) -> None:
                 callback, state,
                 "🔗 لینک اتصال ۳۰ دقیقه اعتبار دارد. ربات را در گروه مدیر کن و لینک را از همان گروه باز کن.",
                 markup,
+            )
+        elif action == "manager":
+            await _begin_flow(
+                callback,
+                state,
+                flow="class_manager_assign",
+                step="telegram_id",
+                prompt="شناسه عددی تلگرام مدیر جدید را وارد کن. او باید ربات را در خصوصی Start کرده باشد.",
+                class_id=class_id,
+                back=f"v2:class:open:{class_id}",
+            )
+        elif action == "timetable":
+            async with SessionFactory() as session:
+                async with session.begin():
+                    subjects = await list_subjects(session, user, class_id)
+            if not subjects:
+                await _edit(
+                    callback, state,
+                    "برای این کلاس هنوز درسی ثبت نشده است.",
+                    menu([], f"v2:class:open:{class_id}"),
+                )
+                return
+            rows = [
+                [button(subject.name[:50], f"v2:timetable:subject:{class_id}:{subject.id}")]
+                for subject in subjects
+            ]
+            await _edit(
+                callback, state,
+                "برای کدام درس زنگ برنامه ثبت می‌کنی؟",
+                menu(rows, f"v2:class:open:{class_id}"),
+            )
+        elif action == "cancel":
+            async with SessionFactory() as session:
+                async with session.begin():
+                    homework_rows = await list_homework(session, user, class_id)
+                    exam_rows = await list_exams(session, user, class_id)
+            rows = []
+            for item, subject in homework_rows[:10]:
+                rows.append([
+                    button(
+                        f"📚 {subject.name[:18]} · {item.title[:24]}",
+                        f"v2:cancel:confirm:homework:{class_id}:{item.id}",
+                    )
+                ])
+            for item, subject in exam_rows[:10]:
+                rows.append([
+                    button(
+                        f"📝 {subject.name[:18]} · {item.title[:24]}",
+                        f"v2:cancel:confirm:exam:{class_id}:{item.id}",
+                    )
+                ])
+            await _edit(
+                callback, state,
+                "رکورد تأییدشده‌ای را برای لغو انتخاب کن. قبل از لغو، تأیید نهایی می‌گیری.",
+                menu(rows, f"v2:class:open:{class_id}"),
             )
         elif action == "subject":
             await _begin_flow(
