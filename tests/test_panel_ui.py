@@ -44,4 +44,4 @@ def test_class_manager_sees_class_management_but_not_platform_admin():
 
 def test_wizard_keyboard_has_a_return_to_menu_control():
     labels = _labels(wizard_cancel_keyboard())
-    assert "⬅️ بازگشت به منو" in labels
+    assert labels == {"⬅️ بازگشت"}
