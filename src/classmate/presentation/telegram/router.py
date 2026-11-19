@@ -25,11 +25,13 @@ from classmate.application.classrooms import (
     join_class,
     list_subjects,
 )
-from classmate.application.groups import bind_class_group, bind_class_group as _bind_class_group
-from classmate.application.groups import get_bound_class, issue_class_group_link
+from classmate.application.groups import (
+    bind_class_group,
+    get_bound_class,
+    issue_class_group_link,
+)
 from classmate.application.identity import ensure_user
 from classmate.application.records import (
-    cancel_record,
     create_daily_report,
     create_exam,
     create_homework,
@@ -41,7 +43,6 @@ from classmate.application.records import (
 )
 from classmate.application.reminders import set_preference
 from classmate.application.schools import (
-    assign_school_admin,
     bind_school_group,
     create_class,
     create_school,
@@ -70,15 +71,12 @@ from classmate.domain.dates import (
     jalali_datetime,
     parse_school_date,
     parse_school_datetime,
-    persian_weekday,
 )
 from classmate.domain.enums import RecordType, Role
-from classmate.domain.errors import DomainError, Forbidden, NotFound
+from classmate.domain.errors import DomainError, Forbidden
 from classmate.domain.text import normalize_name
 from classmate.presentation.telegram.formatting import html
 from classmate.presentation.telegram.keyboards import (
-    approval_buttons,
-    cancel_form,
     class_dashboard,
     classes_menu,
     main_keyboard,
@@ -91,19 +89,6 @@ from classmate.presentation.telegram.keyboards import (
 
 logger = logging.getLogger(__name__)
 router = Router(name="classmate_v2")
-
-MAIN_ACTIONS = {
-    "🏫 کلاس‌های من": "open",
-    "➕ ثبت اطلاعات": "new",
-    "📚 تکالیف": "homework",
-    "📝 امتحانات": "exams",
-    "📅 برنامه هفتگی": "week",
-    "🗒 امروز": "today",
-    "🔔 یادآوری": "reminders",
-    "🔎 جست‌وجو": "search",
-    "🕓 صف بررسی": "pending",
-    "⚙️ مدیریت کلاس": "manage",
-}
 
 
 async def _user(session, telegram_user, *, private: bool) -> User:
@@ -700,6 +685,8 @@ async def class_callback(callback: CallbackQuery, state: FSMContext) -> None:
     try:
         if action == "open":
             await _show_class_dashboard(callback, state, user, class_id)
+        elif action == "new":
+            await _edit(callback, state, "چه اطلاعاتی می‌خواهی ثبت کنی؟", record_types(class_id))
         else:
             await _show_class_action(callback, state, user, action, class_id)
     except DomainError as exc:
@@ -957,18 +944,6 @@ async def manage_callback(callback: CallbackQuery, state: FSMContext) -> None:
         await callback.answer(str(exc), show_alert=True)
 
 
-@router.callback_query(F.data == "v2:form:cancel")
-async def cancel_form_callback(callback: CallbackQuery, state: FSMContext) -> None:
-    data = await state.get_data()
-    class_id = data.get("class_id")
-    await state.clear()
-    user = await _load_user_from_callback(callback)
-    if class_id:
-        await _show_class_dashboard(callback, state, user, int(class_id))
-    else:
-        await home_callback(callback, state)
-
-
 @router.callback_query(F.data == "v2:schools:manage")
 async def schools_manage_callback(callback: CallbackQuery, state: FSMContext) -> None:
     user = await _load_user_from_callback(callback)
@@ -997,7 +972,10 @@ async def platform_callback(callback: CallbackQuery, state: FSMContext) -> None:
     await _edit(callback, state, "🛡 <b>پنل مدیر کل</b>", menu(rows))
 
 
-@router.callback_query(F.data.startswith("v2:school:"))
+@router.callback_query(
+    F.data == "v2:school:create",
+    F.data.startswith("v2:school:open:"),
+)
 async def school_callback(callback: CallbackQuery, state: FSMContext) -> None:
     parts = callback.data.split(":")
     user = await _load_user_from_callback(callback)
