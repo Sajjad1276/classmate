@@ -9,7 +9,7 @@ def test_daily_summary_is_bounded_and_reports_overflow():
     reports = [
         SimpleNamespace(
             title=f"Report {index}",
-            body="<unsafe>" + ("x" * 1200),
+            body="<unsafe>&" + ("<&>🙂" * 300),
             report_date=date(2026, 11, 19),
         )
         for index in range(8)
@@ -18,7 +18,7 @@ def test_daily_summary_is_bounded_and_reports_overflow():
         (
             SimpleNamespace(
                 title=f"Homework {index}",
-                description="d" * 1400,
+                description="<&>🙂" * 300,
                 due_on=date(2026, 11, 19),
             ),
             SimpleNamespace(name=f"Subject {index}"),
@@ -29,7 +29,7 @@ def test_daily_summary_is_bounded_and_reports_overflow():
         (
             SimpleNamespace(
                 title=f"Exam {index}",
-                scope="s" * 1000,
+                scope="<&>🙂" * 300,
                 scheduled_at=datetime(
                     2026, 11, 19, 10, 0, tzinfo=ZoneInfo("Asia/Tehran")
                 ),
