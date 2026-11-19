@@ -639,7 +639,7 @@ async def _show_reminder_class_selector(callback: CallbackQuery) -> None:
     text = (
         "برای تنظیم یادآوری ابتدا عضو یک کلاس شو."
         if not classes
-        else "🔔 <b>تنظیم یادآوری خصوصی</b>\\nکلاس موردنظر را انتخاب کن:"
+        else "🔔 <b>تنظیم یادآوری خصوصی</b>\nکلاس موردنظر را انتخاب کن:"
     )
     markup = reminder_class_picker(classes) if classes else None
     try:
@@ -670,7 +670,7 @@ async def _show_reminder_preferences(callback: CallbackQuery, class_id: int) -> 
             exams_enabled = preference.exams_enabled if preference else True
     class_name = context[0].name if context else "کلاس"
     await callback.message.edit_text(
-        f"🔔 <b>تنظیم یادآوری — {escape(class_name)}</b>\\n"
+        f"🔔 <b>تنظیم یادآوری — {escape(class_name)}</b>\n"
         "این تنظیم فقط روی پیام‌های خصوصی اثر دارد؛ اعلان گروهی کلاس جداگانه ارسال می‌شود.",
         reply_markup=reminder_preferences_keyboard(
             class_id,
@@ -749,7 +749,7 @@ async def reminder_settings_reply_button(message: Message):
         await message.answer("برای تنظیم یادآوری ابتدا عضو یک کلاس شو.")
         return
     await message.answer(
-        "🔔 <b>تنظیم یادآوری خصوصی</b>\\nکلاس موردنظر را انتخاب کن:",
+        "🔔 <b>تنظیم یادآوری خصوصی</b>\nکلاس موردنظر را انتخاب کن:",
         reply_markup=reminder_class_picker(classes),
     )
 
@@ -2025,7 +2025,7 @@ async def reminder_preferences(message: Message):
     parts = message.text.split()
     if len(parts) < 2 or not parts[1].isdigit():
         await message.answer(
-            "این فرمان برای سازگاری قبلی است. از دکمه «🔔 یادآوری» استفاده کن تا کلاس را از فهرست انتخاب کنی.\\n"
+            "این فرمان برای سازگاری قبلی است. از دکمه «🔔 یادآوری» استفاده کن تا کلاس را از فهرست انتخاب کنی.\n"
             "قالب قدیمی: /reminders_on شناسه_کلاس [homework|exams|all]"
         )
         return
