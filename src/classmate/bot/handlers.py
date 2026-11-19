@@ -323,14 +323,12 @@ async def start(message: Message, state: FSMContext, bot: Bot):
                 if message.chat.type == "private"
                 else None
             )
-            platform_admin = user.is_platform_admin
-    greeting = f"سلام {escape(message.from_user.first_name or '')} 👋\\n"
-    greeting += (
-        "به ClassMate خوش آمدی. تمام بخش‌ها را با دکمه‌های پایین صفحه باز کن.\\n"
-        "اطلاعات ثبت‌شده تا پیش از تأیید افراد مورد اعتماد، در فهرست قطعی کلاس نمایش داده نمی‌شوند."
+    greeting = (
+        f"• درود بیکران 🕊 {escape(message.from_user.full_name)}، به ربات ClassMate خوش آمدید.\\n\\n"
+        "📇 - در اینجا می‌تونید امور مدرسه رو به صورت حرفه‌ای و پیشرفته مدیریت کنید.\\n\\n"
+        f"• آیدی شما : <code>{message.from_user.id}</code>\\n\\n"
+        "🪎جهت ادامه دستور مورد نظر رو از پنل زیر وارد کنید:"
     )
-    if platform_admin:
-        greeting += "\\n\\n🛡 پنل مدیر کل برای این حساب فعال است."
     await message.answer(greeting, reply_markup=keyboard)
 
 
