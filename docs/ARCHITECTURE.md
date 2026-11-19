@@ -46,7 +46,9 @@ The resolver reads a class's timetable entries for a subject, evaluates the next
 
 ## Daily summaries and reporting
 
-A class may have multiple DailyReport submissions on the same local date. The unique class/date constraint was replaced by a non-unique lookup index; migration 0003 preserves existing report rows. The /today command and class-group dashboard use the school's timezone and a half-open local-day interval [midnight, next midnight) for scheduled exams, which avoids assuming every local day is exactly 24 hours. Homework is filtered by its local due date.\n\n## Reminder worker
+A class may have multiple DailyReport submissions on the same local date. The unique class/date constraint was replaced by a non-unique lookup index; migration 0003 preserves existing report rows. The /today command and class-group dashboard use the school's timezone and a half-open local-day interval [midnight, next midnight) for scheduled exams, which avoids assuming every local day is exactly 24 hours. Homework is filtered by its local due date.
+
+## Reminder worker
 
 Workers claim due reminder rows via PostgreSQL FOR UPDATE SKIP LOCKED, set a processing lease, send, then mark success or schedule exponential retry. Recovery also claims expired leases with SKIP LOCKED. Every claim receives a lease timestamp token; a worker may finish only while the persisted row is still processing under that exact token, preventing a delayed worker from overwriting a newer claim. The queue is durable and independent of the bot process.
 
