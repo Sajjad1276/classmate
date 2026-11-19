@@ -34,6 +34,30 @@ def upgrade() -> None:
             unique=False,
         )
 
+    # Repair any legacy duplicate current-year markers before enforcing the invariant.
+    op.execute(
+        sa.text(
+            "UPDATE academic_years AS old SET is_current = false "
+            "WHERE old.is_current = true AND EXISTS ("
+            "SELECT 1 FROM academic_years AS newer "
+            "WHERE newer.school_id = old.school_id AND newer.is_current = true "
+            "AND (newer.created_at, newer.id) > (old.created_at, old.id))"
+        )
+    )
+    current_indexes = {
+        item.get("name")
+        for item in sa.inspect(op.get_bind()).get_indexes("academic_years")
+        if item.get("name")
+    }
+    if "uq_one_current_academic_year_per_school" not in current_indexes:
+        op.create_index(
+            "uq_one_current_academic_year_per_school",
+            "academic_years",
+            ["school_id"],
+            unique=True,
+            postgresql_where=sa.text("is_current = true"),
+        )
+
     tables = set(inspector.get_table_names())
     if "bot_states" not in tables:
         op.create_table(
@@ -54,6 +78,16 @@ def upgrade() -> None:
 
 def downgrade() -> None:
     inspector = sa.inspect(op.get_bind())
+    current_indexes = {
+        item.get("name")
+        for item in inspector.get_indexes("academic_years")
+        if item.get("name")
+    }
+    if "uq_one_current_academic_year_per_school" in current_indexes:
+        op.drop_index(
+            "uq_one_current_academic_year_per_school",
+            table_name="academic_years",
+        )
     if "bot_states" in inspector.get_table_names():
         op.drop_index("ix_bot_states_expires_at", table_name="bot_states")
         op.drop_table("bot_states")
