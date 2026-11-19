@@ -179,6 +179,7 @@ class DailyReport(TimestampMixin, Base):
     created_by: Mapped[int] = mapped_column(ForeignKey("users.id"))
     approved_by: Mapped[int | None] = mapped_column(ForeignKey("users.id"))
     approved_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True))
+    cancelled_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True))
 
 
 class ReportItem(TimestampMixin, Base):
