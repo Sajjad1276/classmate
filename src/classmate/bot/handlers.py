@@ -15,6 +15,7 @@ from classmate.bot.keyboards import (
     class_picker,
     main_menu,
     main_reply_keyboard,
+    group_menu_keyboard,
     wizard_cancel_keyboard,
     new_record_menu,
     subject_picker,
@@ -303,7 +304,7 @@ async def connect_school_group(message: Message, bot: Bot):
 
     confirmation = (
         f"✅ گروه «{escape(message.chat.title or 'گروه مدرسه')}» به مدرسه "
-        f"«{escape(school_name)}» متصل شد.\\n"
+        f"«{escape(school_name)}» متصل شد.\n"
         "از این پس این گروه، گروه اصلی اطلاع‌رسانی آن مدرسه خواهد بود."
     )
     await message.answer(confirmation)
@@ -333,14 +334,47 @@ async def start(message: Message, state: FSMContext, bot: Bot):
                 if message.chat.type == "private"
                 else None
             )
+            group_context = (
+                await get_group_context(session, message.chat.id)
+                if message.chat.type in {"group", "supergroup"}
+                else None
+            )
+            group_can_review = bool(
+                group_context and await can_approve(session, user, group_context[0].id)
+            )
+            school_group_name = None
+            if message.chat.type in {"group", "supergroup"} and group_context is None:
+                school_group_name = await session.scalar(
+                    select(School.name).where(
+                        School.telegram_group_id == message.chat.id,
+                        School.is_active.is_(True),
+                    )
+                )
             platform_admin = user.is_platform_admin
-    greeting = f"سلام {escape(message.from_user.first_name or '')} 👋\\n"
+
+    if group_context:
+        class_group, _, school = group_context
+        await message.answer(
+            f"🏫 <b>{escape(class_group.name)}</b> — {escape(school.name)}\n"
+            "منوی این کلاس:",
+            reply_markup=group_menu_keyboard(can_review=group_can_review),
+        )
+        return
+    if school_group_name:
+        await message.answer(
+            f"🏫 <b>گروه مرکزی مدرسه {escape(school_group_name)}</b>\n"
+            "این گروه برای اطلاع‌رسانی مدرسه متصل است. برای ثبت و مشاهده اطلاعات درسی، "
+            "از گروه اختصاصی هر کلاس استفاده کن."
+        )
+        return
+
+    greeting = f"سلام {escape(message.from_user.first_name or '')} 👋\n"
     greeting += (
-        "به ClassMate خوش آمدی. تمام بخش‌ها را با دکمه‌های پایین صفحه باز کن.\\n"
+        "به ClassMate خوش آمدی. تمام بخش‌ها را با دکمه‌های پایین صفحه باز کن.\n"
         "اطلاعات ثبت‌شده تا پیش از تأیید افراد مورد اعتماد، در فهرست قطعی کلاس نمایش داده نمی‌شوند."
     )
     if platform_admin:
-        greeting += "\\n\\n🛡 پنل مدیر کل برای این حساب فعال است."
+        greeting += "\n\n🛡 پنل مدیر کل برای این حساب فعال است."
     await message.answer(greeting, reply_markup=keyboard)
 
 
@@ -361,6 +395,107 @@ async def help_command(message: Message):
         "برای بازگشت از هر پنل، دکمه «بازگشت» همان پنل را بزن.",
         reply_markup=keyboard,
     )
+
+
+@router.callback_query(F.data.startswith("group:"))
+async def group_menu_action(callback: CallbackQuery, bot: Bot):
+    if callback.message.chat.type not in {"group", "supergroup"}:
+        await callback.answer("این منو فقط در گروه کلاس فعال است.", show_alert=True)
+        return
+
+    action = callback.data.split(":", 1)[1]
+    pending = []
+    class_name = ""
+    answer = ""
+    async with SessionFactory() as session:
+        async with session.begin():
+            user = await _user(session, callback.from_user, private=False)
+            context = await get_group_context(session, callback.message.chat.id)
+            if not context:
+                await callback.answer("این گروه به یک کلاس فعال متصل نیست.", show_alert=True)
+                return
+            class_group, _, school = context
+            class_name = class_group.name
+
+            if action == "pending":
+                if not await can_approve(session, user, class_group.id):
+                    await callback.answer("مجوز مشاهده صف بررسی را نداری.", show_alert=True)
+                    return
+                pending = await list_pending_records(session, class_group.id)
+            elif action == "homework":
+                answer = _format_homework(await list_homework(session, class_group.id))
+            elif action == "exams":
+                answer = _format_exams(
+                    await list_exams(session, class_group.id), school.timezone
+                )
+            elif action == "week":
+                entries = list(
+                    (
+                        await session.execute(
+                            select(TimetableEntry, Subject)
+                            .join(Subject, TimetableEntry.subject_id == Subject.id)
+                            .where(TimetableEntry.class_id == class_group.id)
+                            .order_by(TimetableEntry.weekday, TimetableEntry.period)
+                        )
+                    ).all()
+                )
+                answer = (
+                    "برنامه هفتگی هنوز برای این کلاس ثبت نشده است."
+                    if not entries
+                    else "📅 <b>برنامه هفتگی</b>\\n"
+                    + "\\n".join(
+                        f"{WEEKDAYS[entry.weekday]} — زنگ {entry.period}"
+                        + (f" ({entry.starts_at.strftime('%H:%M')})" if entry.starts_at else "")
+                        + f": {escape(subject.name)}"
+                        for entry, subject in entries
+                    )
+                )
+            elif action == "today":
+                zone = ZoneInfo(school.timezone)
+                today = datetime.now(zone).date()
+                reports = await list_reports(session, class_group.id, today)
+                homework_rows = [
+                    row for row in await list_homework(session, class_group.id)
+                    if row[0].due_on == today
+                ]
+                exam_rows = [
+                    row for row in await list_exams(session, class_group.id)
+                    if row[0].scheduled_at.astimezone(zone).date() == today
+                ]
+                parts = [f"🗓 <b>خلاصه امروز — {jalali_date(today)}</b>"]
+                if reports:
+                    parts.extend(
+                        f"\\n🗒 <b>{escape(report.title or 'گزارش روزانه')}</b>\\n{escape(report.body)}"
+                        for report in reports
+                    )
+                else:
+                    parts.append("\\n🗒 گزارش تأییدشده‌ای برای امروز ثبت نشده است.")
+                parts.append("\\n" + _format_homework(homework_rows))
+                parts.append("\\n" + _format_exams(exam_rows, school.timezone))
+                answer = "\\n".join(parts)
+            else:
+                await callback.answer("این گزینه شناخته‌شده نیست.", show_alert=True)
+                return
+
+    if action == "pending":
+        if not pending:
+            await callback.message.answer("🕓 موردی در انتظار بررسی نیست.")
+        else:
+            for kind, record in pending[:8]:
+                title = getattr(record, "title", "گزارش روزانه")
+                details = getattr(record, "description", getattr(record, "body", getattr(record, "scope", "")))
+                await callback.message.answer(
+                    f"🕓 <b>{escape(kind)} #{record.id} — {escape(title)}</b>\\n"
+                    f"{escape(details[:1200])}",
+                    reply_markup=approval_keyboard(kind, record.id),
+                )
+            if len(pending) > 8:
+                await callback.message.answer("فقط ۸ مورد نخست صف بررسی نمایش داده شد.")
+    else:
+        await callback.message.answer(
+            f"🏫 <b>{escape(class_name)}</b>\\n\\n{answer}"
+        )
+    await callback.answer()
 
 
 @router.callback_query(F.data == "menu:home")
