@@ -1,3 +1,4 @@
+from classmate.bot.panel_handlers import _should_create_panel_message
 from classmate.bot.keyboards import (
     group_menu_keyboard,
     main_reply_keyboard,
@@ -79,3 +80,16 @@ def test_group_menu_shows_review_only_for_approvers():
     }
 
     assert "🕓 صف بررسی" in labels
+
+
+
+def test_panel_recreated_when_reply_keyboard_is_visible():
+    assert _should_create_panel_message(123, True)
+
+
+def test_panel_message_edited_when_reply_keyboard_is_hidden():
+    assert not _should_create_panel_message(123, False)
+
+
+def test_panel_created_when_no_previous_message_exists():
+    assert _should_create_panel_message(None, False)
