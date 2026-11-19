@@ -1,4 +1,6 @@
-from sqlalchemy import select, update
+from datetime import datetime, timedelta, timezone
+
+from sqlalchemy import func, select, update
 from sqlalchemy.exc import IntegrityError
 from sqlalchemy.ext.asyncio import AsyncSession
 
@@ -6,6 +8,8 @@ from classmate.application.access import school_admin_for
 from classmate.db.models import AcademicYear, ClassGroup, School, SchoolMembership, User
 from classmate.domain.errors import Conflict, Forbidden, NotFound, ValidationError
 from classmate.domain.text import normalize_name
+from classmate.services.permissions import hash_code
+from classmate.application.classrooms import make_invite_code
 
 
 async def create_school(
@@ -125,3 +129,80 @@ async def assign_school_admin(
         membership.is_active = True
     await session.flush()
     return membership
+
+
+
+async def list_managed_schools(session: AsyncSession, actor: User) -> list[School]:
+    if actor.is_platform_admin:
+        query = select(School).where(School.is_active.is_(True))
+    else:
+        query = (
+            select(School)
+            .join(SchoolMembership, SchoolMembership.school_id == School.id)
+            .where(
+                SchoolMembership.user_id == actor.id,
+                SchoolMembership.role == "school_admin",
+                SchoolMembership.is_active.is_(True),
+                School.is_active.is_(True),
+            )
+        )
+    return list((await session.scalars(query.order_by(School.name))).all())
+
+
+async def issue_school_group_link(
+    session: AsyncSession, actor: User, school_id: int
+) -> str:
+    school = await session.scalar(
+        select(School).where(School.id == school_id).with_for_update()
+    )
+    if school is None or not school.is_active:
+        raise NotFound("مدرسه فعال پیدا نشد.")
+    if not await school_admin_for(session, actor, school_id):
+        raise Forbidden("مدیر این مدرسه نیستی.")
+    code = make_invite_code()
+    school.group_link_token_hash = hash_code(code)
+    school.group_link_token_expires_at = datetime.now(timezone.utc) + timedelta(hours=24)
+    await session.flush()
+    return code
+
+
+async def bind_school_group(
+    session: AsyncSession,
+    *,
+    code: str,
+    chat_id: int,
+    chat_title: str,
+) -> School:
+    await session.execute(select(func.pg_advisory_xact_lock(chat_id)))
+    school = await session.scalar(
+        select(School)
+        .where(
+            School.group_link_token_hash == hash_code(code),
+            School.group_link_token_expires_at > datetime.now(timezone.utc),
+            School.is_active.is_(True),
+        )
+        .with_for_update()
+    )
+    if school is None:
+        raise NotFound("لینک اتصال مدرسه نامعتبر یا منقضی شده است.")
+    from classmate.db.models import ClassGroup
+
+    class_binding = await session.scalar(
+        select(ClassGroup.id).where(ClassGroup.group_chat_id == chat_id)
+    )
+    if class_binding is not None:
+        raise Conflict("این گروه قبلاً به یک کلاس متصل شده است.")
+    other_school = await session.scalar(
+        select(School.id).where(
+            School.telegram_group_id == chat_id,
+            School.id != school.id,
+        )
+    )
+    if other_school is not None:
+        raise Conflict("این گروه قبلاً به مدرسه دیگری متصل شده است.")
+    school.telegram_group_id = chat_id
+    school.telegram_group_title = (chat_title or "")[:180] or None
+    school.group_link_token_hash = None
+    school.group_link_token_expires_at = None
+    await session.flush()
+    return school
