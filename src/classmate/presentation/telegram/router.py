@@ -182,9 +182,9 @@ async def _send(
 
 def _welcome_text(user: User) -> str:
     return (
-        f"• درود بیکران 🕊 {html(user.full_name)}، به ربات ClassMate خوش آمدید.\\n\\n"
-        "📇 - در اینجا می‌تونید امور مدرسه رو به صورت حرفه‌ای و پیشرفته مدیریت کنید.\\n\\n"
-        f"• آیدی شما: <code>{user.telegram_id}</code>\\n\\n"
+        f"• درود بیکران 🕊 {html(user.full_name)}، به ربات ClassMate خوش آمدید.\n\n"
+        "📇 - در اینجا می‌تونید امور مدرسه رو به صورت حرفه‌ای و پیشرفته مدیریت کنید.\n\n"
+        f"• آیدی شما: <code>{user.telegram_id}</code>\n\n"
         "🪎 جهت ادامه، دستور مورد نظر رو از پنل زیر وارد کنید:"
     )
 
