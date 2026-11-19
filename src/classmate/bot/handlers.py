@@ -215,7 +215,9 @@ TELEGRAM_SAFE_TEXT_LIMIT = 3600
 
 def _append_bounded(parts: list[str], block: str) -> bool:
     """Append one complete HTML block only when the encoded message stays bounded."""
-    if len("\\n\\n".join([*parts, block])) > TELEGRAM_SAFE_TEXT_LIMIT:
+    candidate = "\\n\\n".join([*parts, block])
+    # Telegram counts UTF-16 code units; escaped HTML entities are included here.
+    if len(candidate.encode("utf-16-le")) // 2 > TELEGRAM_SAFE_TEXT_LIMIT:
         return False
     parts.append(block)
     return True
