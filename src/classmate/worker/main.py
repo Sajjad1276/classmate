@@ -5,12 +5,13 @@ from datetime import datetime, timedelta, timezone
 from aiogram import Bot
 from aiogram.client.default import DefaultBotProperties
 from aiogram.enums import ParseMode
-from aiogram.exceptions import TelegramAPIError
+from aiogram.exceptions import TelegramAPIError, TelegramNetworkError, TelegramRetryAfter, TelegramServerError
 from sqlalchemy import select
 
 from classmate.core.config import get_settings
 from classmate.core.logging import configure_logging
 from classmate.db.models import ReminderJob
+from classmate.domain.enums import ReminderStatus
 from classmate.db.session import SessionFactory, dispose_engine
 from classmate.worker.wait_for_schema import wait_for_schema
 
@@ -35,21 +36,23 @@ async def claim_due_job() -> ReminderJobSnapshot | None:
             stale = (
                 await session.execute(
                     select(ReminderJob).where(
-                        ReminderJob.status == "processing",
+                        ReminderJob.status == ReminderStatus.PROCESSING,
                         ReminderJob.locked_at < cutoff,
                     )
                 )
             ).scalars().all()
             for item in stale:
-                item.status = "retry"
-                item.scheduled_at = datetime.now(timezone.utc)
-                item.last_error = "Recovered after an interrupted worker lease."
+                # The process may have crashed after Telegram accepted the message but
+                # before the DB commit. Retrying here can create a duplicate, so require
+                # an explicit operator decision for ambiguous sends.
+                item.status = ReminderStatus.UNCERTAIN
+                item.last_error = "Delivery outcome unknown after worker interruption; manual review required."
                 item.locked_at = None
 
             job = await session.scalar(
                 select(ReminderJob)
                 .where(
-                    ReminderJob.status.in_(["pending", "retry"]),
+                    ReminderJob.status.in_([ReminderStatus.PENDING, ReminderStatus.RETRY]),
                     ReminderJob.scheduled_at <= datetime.now(timezone.utc),
                 )
                 .order_by(ReminderJob.scheduled_at, ReminderJob.id)
@@ -58,14 +61,21 @@ async def claim_due_job() -> ReminderJobSnapshot | None:
             )
             if job is None:
                 return None
-            job.status = "processing"
+            job.status = ReminderStatus.PROCESSING
             job.locked_at = datetime.now(timezone.utc)
             job.attempts += 1
             await session.flush()
             return ReminderJobSnapshot(job.id, job.target_id, job.message_text, job.attempts)
 
 
-async def finish_job(job_id: int, error: str | None = None, attempts: int = 1) -> None:
+async def finish_job(
+    job_id: int,
+    error: str | None = None,
+    attempts: int = 1,
+    *,
+    retry_after_seconds: int | None = None,
+    uncertain: bool = False,
+) -> None:
     async with SessionFactory() as session:
         async with session.begin():
             job = await session.get(ReminderJob, job_id, with_for_update=True)
@@ -73,16 +83,23 @@ async def finish_job(job_id: int, error: str | None = None, attempts: int = 1) -
                 return
             job.locked_at = None
             if error is None:
-                job.status = "sent"
+                job.status = ReminderStatus.SENT
                 job.sent_at = datetime.now(timezone.utc)
                 job.last_error = None
                 return
             job.last_error = error[:2000]
+            if uncertain:
+                job.status = ReminderStatus.UNCERTAIN
+                return
             if attempts >= MAX_ATTEMPTS:
-                job.status = "failed"
+                job.status = ReminderStatus.FAILED
             else:
-                job.status = "retry"
-                delay_seconds = min(3600, 30 * (2 ** max(0, attempts - 1)))
+                job.status = ReminderStatus.RETRY
+                delay_seconds = (
+                    max(1, retry_after_seconds)
+                    if retry_after_seconds is not None
+                    else min(3600, 30 * (2 ** max(0, attempts - 1)))
+                )
                 job.scheduled_at = datetime.now(timezone.utc) + timedelta(seconds=delay_seconds)
 
 
@@ -110,12 +127,21 @@ async def run_worker() -> None:
                 await bot.send_message(job.target_id, job.message_text)
                 await finish_job(job.id)
                 logger.info("Reminder job %s delivered", job.id)
+            except TelegramRetryAfter as exc:
+                logger.warning("Reminder job %s rate-limited: %s", job.id, exc)
+                await finish_job(
+                    job.id, str(exc), job.attempts,
+                    retry_after_seconds=int(exc.retry_after),
+                )
+            except (TelegramNetworkError, TelegramServerError) as exc:
+                logger.warning("Reminder job %s has an ambiguous delivery result: %s", job.id, exc)
+                await finish_job(job.id, str(exc), job.attempts, uncertain=True)
             except TelegramAPIError as exc:
-                logger.warning("Reminder job %s failed: %s", job.id, exc)
-                await finish_job(job.id, str(exc), job.attempts)
+                logger.warning("Reminder job %s rejected by Telegram: %s", job.id, exc)
+                await finish_job(job.id, str(exc), MAX_ATTEMPTS)
             except Exception as exc:
                 logger.exception("Unexpected error sending reminder job %s", job.id)
-                await finish_job(job.id, str(exc), job.attempts)
+                await finish_job(job.id, str(exc), job.attempts, uncertain=True)
     finally:
         await bot.session.close()
         await dispose_engine()
