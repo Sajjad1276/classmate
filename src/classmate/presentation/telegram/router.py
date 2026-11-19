@@ -2,7 +2,6 @@ from __future__ import annotations
 
 import logging
 from datetime import datetime, timezone
-from html import escape
 from zoneinfo import ZoneInfo
 
 from aiogram import Bot, F, Router
@@ -56,7 +55,6 @@ from classmate.db.models import (
     AcademicYear,
     ClassGroup,
     ClassMembership,
-    DailyReport,
     Exam,
     Homework,
     NotificationPreference,
@@ -511,7 +509,29 @@ async def _finish_flow(
     panel_id = data.get("panel_message_id")
     chat_id = data.get("panel_chat_id", message.chat.id)
     await state.clear()
-    markup = menu([], f"v2:class:open:{class_id}") if class_id else await _home_markup_for_telegram(message)
+    if class_id:
+        async with SessionFactory() as session:
+            async with session.begin():
+                user = await _user(
+                    session, message.from_user, private=message.chat.type == "private"
+                )
+                class_group, _, school = await require_class_access(session, user, class_id)
+                role = await class_role_for(session, user, class_id)
+                can_manage = (
+                    user.is_platform_admin
+                    or await school_admin_for(session, user, school.id)
+                    or role == Role.CLASS_MANAGER.value
+                )
+                can_review = can_manage or role == Role.TRUSTED_APPROVER.value
+                group_mode = message.chat.type in {"group", "supergroup"}
+        markup = class_dashboard(
+            class_id,
+            can_review=can_review,
+            can_manage=can_manage,
+            group_mode=group_mode,
+        )
+    else:
+        markup = await _home_markup_for_telegram(message)
     if panel_id:
         try:
             await message.bot.edit_message_text(
@@ -657,7 +677,7 @@ async def start(message: Message, state: FSMContext, bot: Bot) -> None:
 
 @router.message(Command("help"))
 async def help_command(message: Message, state: FSMContext) -> None:
-    user = await _load_user_from_message(message)
+    await _load_user_from_message(message)
     await state.clear()
     await _send(
         message,
