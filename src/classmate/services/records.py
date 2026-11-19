@@ -1,7 +1,7 @@
 from datetime import date, datetime, time, timedelta
 from zoneinfo import ZoneInfo
 
-from sqlalchemy import select
+from sqlalchemy import or_, select
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from classmate.db.models import (
@@ -419,6 +419,51 @@ async def list_pending_records(session: AsyncSession, class_id: int):
         ).scalars().all()
         pending.extend((label, record) for record in records)
     return pending
+
+
+async def list_daily_summary(
+    session: AsyncSession,
+    class_id: int,
+    local_date: date,
+    timezone_name: str,
+):
+    """Return today's approved report, due homework and scheduled exams."""
+    zone = ZoneInfo(timezone_name)
+    reports = await list_reports(session, class_id, local_date)
+    homework = [
+        row for row in await list_homework(session, class_id)
+        if row[0].due_on == local_date
+    ]
+    exams = [
+        row for row in await list_exams(session, class_id)
+        if row[0].scheduled_at.astimezone(zone).date() == local_date
+    ]
+    return reports, homework, exams
+
+
+async def list_current_timetable(
+    session: AsyncSession,
+    class_id: int,
+    local_date: date,
+) -> list[tuple[TimetableEntry, Subject]]:
+    """Return timetable slots valid on the requested local date."""
+    query = (
+        select(TimetableEntry, Subject)
+        .join(Subject, TimetableEntry.subject_id == Subject.id)
+        .where(
+            TimetableEntry.class_id == class_id,
+            or_(
+                TimetableEntry.valid_from.is_(None),
+                TimetableEntry.valid_from <= local_date,
+            ),
+            or_(
+                TimetableEntry.valid_until.is_(None),
+                TimetableEntry.valid_until >= local_date,
+            ),
+        )
+        .order_by(TimetableEntry.weekday, TimetableEntry.period)
+    )
+    return list((await session.execute(query)).all())
 
 
 async def set_reminders_cancelled(
