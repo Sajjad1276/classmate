@@ -9,7 +9,7 @@
 5. Use **مدیریت مدرسه** to create classes and appoint school/class managers.
 6. Use a class dashboard's **مدیریت این کلاس** panel to add trusted approvers, subjects and timetable slots.
 
-The bootstrap list is only for the first platform-admin setup. Keep it limited to trusted owners. Do not send the bot token or admin credentials in chat. The group-add link expires after 24 hours and can only be consumed by a platform admin or admin of that school who is also a Telegram group admin.
+The bootstrap list is only for the first platform-admin setup. Keep it limited to trusted owners. Do not send the bot token or admin credentials in chat. The group-add link expires after 24 hours and can only be consumed by a platform admin or an admin of that school. Telegram's group picker enforces the user's ability to add the bot to the selected group.
 
 ## Student onboarding
 
