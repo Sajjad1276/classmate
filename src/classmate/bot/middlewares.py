@@ -9,6 +9,7 @@ from sqlalchemy.dialects.postgresql import insert
 from sqlalchemy.ext.asyncio import async_sessionmaker, AsyncSession
 
 from classmate.db.models import ProcessedUpdate
+from classmate.domain.enums import UpdateStatus
 
 logger = logging.getLogger(__name__)
 UPDATE_LEASE = timedelta(minutes=5)
@@ -25,20 +26,20 @@ class ProcessedUpdateMiddleware(BaseMiddleware):
         statement = insert(ProcessedUpdate).values(
             update_id=update_id,
             processed_at=now,
-            status="processing",
+            status=UpdateStatus.PROCESSING,
             lease_expires_at=now + UPDATE_LEASE,
             attempts=1,
         )
         statement = statement.on_conflict_do_update(
             index_elements=[ProcessedUpdate.update_id],
             set_={
-                "status": "processing",
+                "status": UpdateStatus.PROCESSING,
                 "lease_expires_at": now + UPDATE_LEASE,
                 "attempts": ProcessedUpdate.attempts + 1,
                 "last_error": None,
             },
             where=or_(
-                ProcessedUpdate.status == "failed",
+                ProcessedUpdate.status == UpdateStatus.FAILED,
                 ProcessedUpdate.lease_expires_at < now,
             ),
         ).returning(ProcessedUpdate.update_id)
@@ -50,7 +51,7 @@ class ProcessedUpdateMiddleware(BaseMiddleware):
     async def _finish(self, update_id: int, *, error: str | None = None) -> None:
         now = datetime.now(timezone.utc)
         values = {
-            "status": "failed" if error else "processed",
+            "status": UpdateStatus.FAILED if error else UpdateStatus.PROCESSED,
             "lease_expires_at": None,
             "last_error": error[:2000] if error else None,
         }
