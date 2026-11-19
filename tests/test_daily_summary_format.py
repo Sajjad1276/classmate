@@ -44,7 +44,7 @@ def test_daily_summary_is_bounded_and_reports_overflow():
     )
 
     assert len(result) < 4000
-    assert "موارد بیشتری برای امروز وجود دارد" in result
+    assert "موارد بیشتری وجود دارد" in result
     assert "<unsafe>" not in result
     assert "&lt;unsafe&gt;" in result
     assert "Report 3" not in result
@@ -58,5 +58,5 @@ def test_daily_summary_handles_empty_categories():
     )
 
     assert "گزارش تأییدشده‌ای" in result
-    assert "تکلیف تأییدشده‌ای" in result
+    assert "امروز تکلیف موعدداری ثبت نشده است." in result
     assert "امتحان آینده‌ای" in result
