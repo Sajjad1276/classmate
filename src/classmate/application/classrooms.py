@@ -1,6 +1,7 @@
 from datetime import datetime, timedelta, timezone
 
 from sqlalchemy import select
+from sqlalchemy.dialects.postgresql import insert as pg_insert
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from classmate.application.access import require_class_access, require_class_role
@@ -128,8 +129,12 @@ async def set_timetable_slot(
     await require_class_role(session, actor, class_id, {Role.CLASS_MANAGER})
     if weekday not in range(7) or period not in range(1, 16):
         raise ValidationError("روز یا شماره زنگ معتبر نیست.")
-    if starts_at and ends_at and starts_at >= ends_at:
+    if (starts_at is None) != (ends_at is None):
+        raise ValidationError("ساعت شروع و پایان را هر دو وارد کن یا هر دو را خالی بگذار.")
+    if starts_at is not None and starts_at >= ends_at:
         raise ValidationError("ساعت پایان باید بعد از ساعت شروع باشد.")
+    if valid_from and valid_until and valid_until < valid_from:
+        raise ValidationError("پایان اعتبار برنامه نمی‌تواند قبل از شروع آن باشد.")
     link = await session.scalar(
         select(ClassSubject.id).where(
             ClassSubject.class_id == class_id,
@@ -138,6 +143,28 @@ async def set_timetable_slot(
     )
     if link is None:
         raise ValidationError("این درس به کلاس متصل نیست.")
+
+    statement = pg_insert(TimetableEntry).values(
+        class_id=class_id,
+        subject_id=subject_id,
+        weekday=weekday,
+        period=period,
+        starts_at=starts_at,
+        ends_at=ends_at,
+        valid_from=valid_from,
+        valid_until=valid_until,
+    )
+    statement = statement.on_conflict_do_update(
+        constraint="uq_class_weekday_period",
+        set_={
+            "subject_id": subject_id,
+            "starts_at": starts_at,
+            "ends_at": ends_at,
+            "valid_from": valid_from,
+            "valid_until": valid_until,
+        },
+    )
+    await session.execute(statement)
     slot = await session.scalar(
         select(TimetableEntry).where(
             TimetableEntry.class_id == class_id,
@@ -146,26 +173,8 @@ async def set_timetable_slot(
         )
     )
     if slot is None:
-        slot = TimetableEntry(
-            class_id=class_id,
-            weekday=weekday,
-            period=period,
-            subject_id=subject_id,
-            starts_at=starts_at,
-            ends_at=ends_at,
-            valid_from=valid_from,
-            valid_until=valid_until,
-        )
-        session.add(slot)
-    else:
-        slot.subject_id = subject_id
-        slot.starts_at = starts_at
-        slot.ends_at = ends_at
-        slot.valid_from = valid_from
-        slot.valid_until = valid_until
-    await session.flush()
+        raise RuntimeError("Timetable upsert completed without a readable slot.")
     return slot
-
 
 
 async def assign_class_manager(
