@@ -23,7 +23,6 @@ from classmate.bot.handlers import (
     _format_exams,
     _format_homework,
     _parse_pipe_args,
-    _subject_list,
     _user,
 )
 from classmate.bot.keyboards import main_reply_keyboard
@@ -33,7 +32,6 @@ from classmate.db.models import (
     AcademicYear,
     ClassGroup,
     ClassMembership,
-    ClassSubject,
     NotificationPreference,
     School,
     SchoolMembership,
@@ -42,7 +40,7 @@ from classmate.db.models import (
     User,
 )
 from classmate.db.session import SessionFactory
-from classmate.domain.dates import jalali_date, jalali_datetime, parse_school_datetime
+from classmate.domain.dates import jalali_date, jalali_datetime
 from classmate.services.permissions import (
     can_approve,
     get_class_with_school,
@@ -55,7 +53,6 @@ from classmate.services.records import (
     add_subject,
     approve_record,
     audit,
-    get_group_context,
     get_or_create_next_lesson,
     get_subject,
     list_exams,
@@ -869,7 +866,6 @@ async def reminder_toggle(callback: CallbackQuery, state: FSMContext, bot: Bot):
                 preference.homework_enabled = enabled
             elif category == "exams":
                 preference.exams_enabled = enabled
-    callback.message  # keep the existing inline panel in place
     await callback.answer("تنظیم یادآوری ذخیره شد.")
     # Re-render using a private Message action and the same panel message ID.
     await _show_action(callback.message, state, bot, callback.from_user, "reminders", class_id)
@@ -968,7 +964,6 @@ async def _handle_panel_input(message: Message, state: FSMContext, bot: Bot) -> 
             async with session.begin():
                 actor = await _user(session, message.from_user, private=True)
                 result_text = ""
-                parent = _parent_for_form(form_name, class_id)
                 if form_name == "join":
                     code = raw.strip()
                     from datetime import timezone
