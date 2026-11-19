@@ -34,6 +34,7 @@ from classmate.db.models import (
     User,
 )
 from classmate.db.session import SessionFactory
+from classmate.domain.enums import ENTITY_LABELS, EntityType, RecordStatus, Role
 from classmate.domain.dates import (
     jalali_date,
     jalali_datetime,
@@ -56,6 +57,7 @@ from classmate.services.records import (
     create_daily_report,
     create_exam,
     create_homework,
+    cancel_approved_record,
     get_group_context,
     get_subject,
     get_or_create_next_lesson,
@@ -87,7 +89,7 @@ async def _main_keyboard_for_user(session: AsyncSession, user: User):
         await session.scalar(
             select(SchoolMembership.id).where(
                 SchoolMembership.user_id == user.id,
-                SchoolMembership.role == "school_admin",
+                SchoolMembership.role == Role.SCHOOL_ADMIN,
                 SchoolMembership.is_active.is_(True),
             )
         )
@@ -102,8 +104,8 @@ async def _main_keyboard_for_user(session: AsyncSession, user: User):
             )
         ).all()
     )
-    class_manager = "class_manager" in class_roles
-    approver = school_admin or class_manager or "trusted_approver" in class_roles
+    class_manager = Role.CLASS_MANAGER in class_roles
+    approver = school_admin or class_manager or Role.TRUSTED_APPROVER in class_roles
     return main_reply_keyboard(
         is_platform_admin=platform_admin,
         is_school_admin=school_admin,
@@ -126,7 +128,7 @@ async def _classes_for_user(session: AsyncSession, user: User) -> list[ClassGrou
             SchoolMembership,
             (SchoolMembership.school_id == AcademicYear.school_id)
             & (SchoolMembership.user_id == user.id)
-            & (SchoolMembership.role == "school_admin")
+            & (SchoolMembership.role == Role.SCHOOL_ADMIN)
             & SchoolMembership.is_active.is_(True),
         )
         .where(
@@ -166,7 +168,7 @@ async def _ensure_group_member(
         )
     )
     if membership is None:
-        session.add(ClassMembership(class_id=class_id, user_id=user.id, role="student"))
+        session.add(ClassMembership(class_id=class_id, user_id=user.id, role=Role.STUDENT))
     elif not membership.is_active:
         membership.is_active = True
 
@@ -177,7 +179,11 @@ async def _subject_list(session: AsyncSession, class_id: int) -> list[Subject]:
             await session.execute(
                 select(Subject)
                 .join(ClassSubject, ClassSubject.subject_id == Subject.id)
-                .where(ClassSubject.class_id == class_id)
+                .where(
+                    ClassSubject.class_id == class_id,
+                    ClassSubject.deleted_at.is_(None),
+                    Subject.deleted_at.is_(None),
+                )
                 .order_by(Subject.name)
             )
         ).scalars().all()
@@ -190,7 +196,7 @@ async def _pending_message(
 ) -> None:
     body = (
         f"🕓 <b>درخواست جدید برای بررسی</b>\n"
-        f"نوع: {escape(entity_type)}\n"
+        f"نوع: {escape(ENTITY_LABELS.get(entity_type, 'اطلاعات'))}\n"
         f"عنوان: {escape(title)}\n"
         f"جزئیات: {escape(details)}\n"
         f"ثبت‌کننده: {escape(creator_name)}\n\n"
@@ -210,7 +216,10 @@ async def _pending_message(
 def _format_homework(rows) -> str:
     if not rows:
         return "هنوز تکلیف تأییدشده‌ای ثبت نشده است."
-    lines = ["📚 <b>تکالیف تأییدشده</b>"]
+    lines = [
+        "📚 <b>تکالیف تأییدشده</b>",
+        "<i>حداکثر ۳۰ تکلیف در این فهرست نمایش داده می‌شود.</i>",
+    ]
     for homework, subject in rows:
         due = jalali_date(homework.due_on) if homework.due_on else "نامشخص"
         lines.append(
@@ -428,7 +437,7 @@ async def school_new(message: Message):
             year = AcademicYear(school_id=school.id, name=values[1][:40], is_current=True)
             session.add(year)
             session.add(
-                SchoolMembership(school_id=school.id, user_id=user.id, role="school_admin")
+                SchoolMembership(school_id=school.id, user_id=user.id, role=Role.SCHOOL_ADMIN)
             )
             await session.flush()
             school_id = school.id
@@ -469,10 +478,10 @@ async def school_admin_add(message: Message):
             )
             if membership is None:
                 session.add(
-                    SchoolMembership(school_id=school_id, user_id=target.id, role="school_admin")
+                    SchoolMembership(school_id=school_id, user_id=target.id, role=Role.SCHOOL_ADMIN)
                 )
             else:
-                membership.role = "school_admin"
+                membership.role = Role.SCHOOL_ADMIN
                 membership.is_active = True
     await message.answer("✅ مدیر مدرسه تعیین شد.")
 
@@ -549,9 +558,9 @@ async def class_manager_add(message: Message):
                 )
             )
             if membership is None:
-                session.add(ClassMembership(class_id=class_id, user_id=target.id, role="class_manager"))
+                session.add(ClassMembership(class_id=class_id, user_id=target.id, role=Role.CLASS_MANAGER))
             else:
-                membership.role = "class_manager"
+                membership.role = Role.CLASS_MANAGER
                 membership.is_active = True
     await message.answer("✅ مدیر کلاس تعیین شد.")
 
@@ -594,7 +603,7 @@ async def class_new(message: Message):
             session.add(item)
             await session.flush()
             class_id = item.id
-            session.add(ClassMembership(class_id=class_id, user_id=user.id, role="class_manager"))
+            session.add(ClassMembership(class_id=class_id, user_id=user.id, role=Role.CLASS_MANAGER))
     await message.answer(
         f"✅ کلاس ایجاد شد. شناسه کلاس: <code>{class_id}</code>\n"
         "برای تولید کد اتصال از /class_code استفاده کن."
@@ -624,7 +633,7 @@ async def class_code(message: Message):
                     select(ClassMembership).where(
                         ClassMembership.class_id == class_id,
                         ClassMembership.user_id == user.id,
-                        ClassMembership.role == "class_manager",
+                        ClassMembership.role == Role.CLASS_MANAGER,
                         ClassMembership.is_active.is_(True),
                     )
                 )
@@ -747,7 +756,7 @@ async def approver_add(message: Message):
                 select(ClassMembership).where(
                     ClassMembership.class_id == class_id,
                     ClassMembership.user_id == actor.id,
-                    ClassMembership.role == "class_manager",
+                    ClassMembership.role == Role.CLASS_MANAGER,
                     ClassMembership.is_active.is_(True),
                 )
             )
@@ -766,11 +775,11 @@ async def approver_add(message: Message):
             )
             if membership is None:
                 membership = ClassMembership(
-                    class_id=class_id, user_id=target.id, role="trusted_approver"
+                    class_id=class_id, user_id=target.id, role=Role.TRUSTED_APPROVER
                 )
                 session.add(membership)
             else:
-                membership.role = "trusted_approver"
+                membership.role = Role.TRUSTED_APPROVER
                 membership.is_active = True
     await message.answer("✅ کاربر به‌عنوان فرد مورد اعتماد این کلاس تعیین شد.")
 
@@ -800,7 +809,7 @@ async def subject_add_command(message: Message):
                 select(ClassMembership).where(
                     ClassMembership.class_id == class_group.id,
                     ClassMembership.user_id == user.id,
-                    ClassMembership.role.in_(["class_manager", "trusted_approver"]),
+                    ClassMembership.role.in_([Role.CLASS_MANAGER, Role.TRUSTED_APPROVER]),
                     ClassMembership.is_active.is_(True),
                 )
             )
@@ -962,7 +971,12 @@ async def wizard_subject_callback(callback: CallbackQuery, state: FSMContext):
             subject = await session.scalar(
                 select(Subject)
                 .join(ClassSubject, ClassSubject.subject_id == Subject.id)
-                .where(Subject.id == subject_id, ClassSubject.class_id == class_id)
+                .where(
+                    Subject.id == subject_id,
+                    ClassSubject.class_id == class_id,
+                    ClassSubject.deleted_at.is_(None),
+                    Subject.deleted_at.is_(None),
+                )
             )
     if subject is None or class_id is None:
         await callback.answer("این درس متعلق به کلاس انتخاب‌شده نیست.", show_alert=True)
@@ -998,7 +1012,7 @@ async def _submit_pending(
             record = await create_fn(session, user)
             await audit(
                 session, school.id, class_id, user.id, "create", entity_type,
-                record.id, {"title": title, "status": "PENDING"},
+                record.id, {"title": title, "status": RecordStatus.PENDING},
             )
             record_id = record.id
             class_snapshot = class_group
@@ -1008,7 +1022,7 @@ async def _submit_pending(
                 await session.scalar(
                     select(SchoolMembership.id).where(
                         SchoolMembership.user_id == user.id,
-                        SchoolMembership.role == "school_admin",
+                        SchoolMembership.role == Role.SCHOOL_ADMIN,
                         SchoolMembership.is_active.is_(True),
                     )
                 )
@@ -1023,8 +1037,8 @@ async def _submit_pending(
                     )
                 ).all()
             )
-            class_manager = "class_manager" in class_roles
-            approver = school_admin or class_manager or "trusted_approver" in class_roles
+            class_manager = Role.CLASS_MANAGER in class_roles
+            approver = school_admin or class_manager or Role.TRUSTED_APPROVER in class_roles
     await state.clear()
     await bot.send_message(
         chat_id,
@@ -1268,14 +1282,49 @@ async def approval_callback(callback: CallbackQuery, bot: Bot):
         if action == "approve":
             await bot.send_message(
                 class_group.group_chat_id,
-                f"✅ <b>اطلاعات تأیید شد</b>\nنوع: {entity_type}\nشناسه: {entity_id}\n"
+                f"✅ <b>اطلاعات تأیید شد</b>\nنوع: {ENTITY_LABELS.get(entity_type, 'اطلاعات')}\nشناسه: {entity_id}\n"
                 "این مورد اکنون در جست‌وجو و فهرست اطلاعات کلاس قابل مشاهده است."
             )
         else:
             await bot.send_message(
                 class_group.group_chat_id,
-                f"❌ درخواست {entity_type} با شناسه {entity_id} رد شد."
+                f"❌ درخواست {ENTITY_LABELS.get(entity_type, 'اطلاعات')} با شناسه {entity_id} رد شد."
             )
+
+
+@router.message(Command("cancel_record"))
+async def cancel_record_command(message: Message):
+    """Cancel an approved record in a linked group or by class ID in private chat."""
+    parts = (message.text or "").split()
+    if message.chat.type == "private":
+        if len(parts) != 4 or not parts[1].isdigit():
+            await message.answer("در خصوصی: /cancel_record شناسه_کلاس homework|exam|report شناسه_رکورد")
+            return
+        class_id, entity_type, entity_id_raw = int(parts[1]), parts[2].lower(), parts[3]
+    else:
+        if len(parts) != 3:
+            await message.answer("در گروه: /cancel_record homework|exam|report شناسه_رکورد")
+            return
+        class_id, entity_type, entity_id_raw = None, parts[1].lower(), parts[2]
+    if entity_type not in {EntityType.HOMEWORK, EntityType.EXAM, EntityType.REPORT} or not entity_id_raw.isdigit():
+        await message.answer("نوع یا شناسه رکورد معتبر نیست.")
+        return
+    async with SessionFactory() as session:
+        async with session.begin():
+            user = await _user(session, message.from_user, private=message.chat.type == "private")
+            context = await _class_from_message(session, message, class_id, user)
+            if not context:
+                await message.answer("کلاس مشخص نیست یا گروه به کلاس متصل نیست.")
+                return
+            class_group, _, school = context
+            if not await can_approve(session, user, class_group.id):
+                await message.answer("برای لغو اطلاعات تأییدشده مجوز نداری.")
+                return
+            success, response = await cancel_approved_record(
+                session, entity_type, int(entity_id_raw), user.id,
+                school.id, class_group.id,
+            )
+    await message.answer(response)
 
 
 @router.message(Command("pending"))
@@ -1306,7 +1355,7 @@ async def pending_command(message: Message):
         title = getattr(record, "title", "گزارش روزانه")
         body = getattr(record, "description", getattr(record, "body", getattr(record, "scope", "")))
         await message.answer(
-            f"🕓 <b>{escape(kind)}</b> #{record.id}\n{escape(title)}\n{escape(body[:1200])}",
+            f"🕓 <b>{escape(ENTITY_LABELS.get(kind, 'اطلاعات'))}</b> #{record.id}\n{escape(title)}\n{escape(body[:1200])}",
             reply_markup=approval_keyboard(kind, record.id),
         )
 
@@ -1436,7 +1485,7 @@ async def timetable_set_command(message: Message):
                 select(ClassMembership.id).where(
                     ClassMembership.class_id == class_group.id,
                     ClassMembership.user_id == user.id,
-                    ClassMembership.role == "class_manager",
+                    ClassMembership.role == Role.CLASS_MANAGER,
                     ClassMembership.is_active.is_(True),
                 )
             )
@@ -1452,6 +1501,7 @@ async def timetable_set_command(message: Message):
                     TimetableEntry.class_id == class_group.id,
                     TimetableEntry.weekday == weekday,
                     TimetableEntry.period == period,
+                    TimetableEntry.deleted_at.is_(None),
                 )
             )
             if entry is None:
