@@ -2025,8 +2025,8 @@ async def reminder_preferences(message: Message):
     parts = message.text.split()
     if len(parts) < 2 or not parts[1].isdigit():
         await message.answer(
-            "قالب: /reminders_on شناسه_کلاس [homework|exams|all]\n"
-            "برای خاموش‌کردن از /reminders_off استفاده کن."
+            "این فرمان برای سازگاری قبلی است. از دکمه «🔔 یادآوری» استفاده کن تا کلاس را از فهرست انتخاب کنی.\\n"
+            "قالب قدیمی: /reminders_on شناسه_کلاس [homework|exams|all]"
         )
         return
     class_id = int(parts[1])
@@ -2042,18 +2042,16 @@ async def reminder_preferences(message: Message):
             if not context:
                 await message.answer("به این کلاس دسترسی نداری.")
                 return
-            preference = await session.scalar(
-                select(NotificationPreference).where(
-                    NotificationPreference.user_id == user.id,
-                    NotificationPreference.class_id == class_id,
-                )
-            )
-            if preference is None:
-                preference = NotificationPreference(user_id=user.id, class_id=class_id)
-                session.add(preference)
+            class_group, _, school = context
             if category in {"homework", "all"}:
-                preference.homework_enabled = enabled
+                await update_user_reminder_preference(
+                    session, user, class_group, school.timezone, "homework", enabled
+                )
             if category in {"exams", "all"}:
-                preference.exams_enabled = enabled
+                await update_user_reminder_preference(
+                    session, user, class_group, school.timezone, "exams", enabled
+                )
     state_label = "فعال" if enabled else "غیرفعال"
-    await message.answer(f"✅ یادآوری‌های انتخاب‌شده برای این کلاس {state_label} شدند.")
+    await message.answer(
+        f"✅ یادآوری‌های انتخاب‌شده برای «{escape(class_group.name)}» {state_label} شدند."
+    )
