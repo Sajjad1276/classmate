@@ -89,6 +89,7 @@ from classmate.presentation.telegram.keyboards import (
     reminder_preferences,
     subject_picker,
     button,
+    form_navigation,
 )
 
 logger = logging.getLogger(__name__)
@@ -512,13 +513,12 @@ async def _begin_flow(
     await state.update_data(
         flow=flow,
         step=step,
+        form_back=back,
         panel_message_id=message.message_id,
         panel_chat_id=message.chat.id,
         **data,
     )
-    await _edit(target, state, f"✍️ {prompt}", InlineKeyboardMarkup(
-        inline_keyboard=[[button("❌ لغو فرم", "v2:form:cancel")]]
-    ))
+    await _edit(target, state, f"✍️ {prompt}", form_navigation(back))
 
 
 async def _finish_flow(
@@ -1430,18 +1430,14 @@ async def _edit_saved_prompt(message: Message, state: FSMContext, prompt: str) -
                 prompt,
                 chat_id=chat_id,
                 message_id=panel_id,
-                reply_markup=InlineKeyboardMarkup(
-                    inline_keyboard=[[button("❌ لغو فرم", "v2:form:cancel")]]
-                ),
+                reply_markup=form_navigation(data.get("form_back", "v2:home")),
             )
             return
         except TelegramBadRequest:
             pass
     sent = await message.answer(
         prompt,
-        reply_markup=InlineKeyboardMarkup(
-            inline_keyboard=[[button("❌ لغو فرم", "v2:form:cancel")]]
-        ),
+        reply_markup=form_navigation(data.get("form_back", "v2:home")),
     )
     await state.update_data(panel_message_id=sent.message_id, panel_chat_id=sent.chat.id)
 
