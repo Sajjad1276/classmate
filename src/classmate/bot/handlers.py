@@ -240,6 +240,74 @@ def _parse_pipe_args(raw: str, count: int) -> list[str]:
     return values
 
 
+@router.message(
+    F.chat.type.in_({"group", "supergroup"}),
+    F.text.regexp(r"^/start(?:@\\w+)?\\s+[A-Za-z0-9_-]{1,64}$"),
+)
+async def connect_school_group(message: Message, bot: Bot):
+    """Consume a one-time startgroup payload and bind this Telegram group to a school."""
+    if message.from_user is None or message.text is None:
+        return
+    payload = message.text.split(maxsplit=1)[1].strip()
+
+    try:
+        member = await bot.get_chat_member(message.chat.id, message.from_user.id)
+    except Exception:
+        logger.exception("Could not verify the user who linked a school group")
+        await message.answer("نتوانستم دسترسی مدیر گروه را بررسی کنم. دوباره تلاش کن.")
+        return
+    if member.status not in {"creator", "administrator"}:
+        await message.answer("برای اتصال گروه، لینک باید توسط مدیر همان گروه اجرا شود.")
+        return
+
+    async with SessionFactory() as session:
+        async with session.begin():
+            actor = await _user(session, message.from_user, private=False)
+            now = datetime.now(timezone.utc)
+            school = await session.scalar(
+                select(School).where(
+                    School.group_link_token_hash == hash_code(payload),
+                    School.group_link_token_expires_at > now,
+                    School.is_active.is_(True),
+                )
+            )
+            if school is None:
+                await message.answer(
+                    "این لینک اتصال معتبر نیست، منقضی شده یا قبلاً استفاده شده است. "
+                    "لینک تازه را از پنل مدرسه دریافت کن."
+                )
+                return
+            if not actor.is_platform_admin and not await is_school_admin(session, actor, school.id):
+                await message.answer("فقط مدیر همین مدرسه یا مدیر کل می‌تواند گروه مدرسه را متصل کند.")
+                return
+
+            already_used = await session.scalar(
+                select(School.id).where(
+                    School.telegram_group_id == message.chat.id,
+                    School.id != school.id,
+                )
+            )
+            if already_used is not None:
+                await message.answer("این گروه قبلاً به مدرسه دیگری متصل شده است.")
+                return
+
+            if school.telegram_group_id not in {None, message.chat.id}:
+                await message.answer("برای این مدرسه قبلاً گروه دیگری متصل شده است.")
+                return
+
+            school.telegram_group_id = message.chat.id
+            school.telegram_group_title = (message.chat.title or "گروه مدرسه")[:180]
+            school.group_link_token_hash = None
+            school.group_link_token_expires_at = None
+            school_name = school.name
+
+    await message.answer(
+        f"✅ گروه «{escape(message.chat.title or 'گروه مدرسه')}» به مدرسه "
+        f"«{escape(school_name)}» متصل شد.\\n"
+        "از این پس این گروه، گروه اصلی اطلاع‌رسانی آن مدرسه خواهد بود."
+    )
+
+
 @router.message(CommandStart())
 async def start(message: Message, state: FSMContext, bot: Bot):
     if message.chat.type == "private":
