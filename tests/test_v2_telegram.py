@@ -87,3 +87,18 @@ def test_v2_main_dashboard_exposes_class_join_action():
 
     assert "v2:join" in _callbacks(markup)
     assert "🔑 عضویت با کد" in _labels(markup)
+
+
+def test_decorative_emoji_labels_never_become_user_message_payloads():
+    markup = main_keyboard(
+        platform_admin=True,
+        school_admin=True,
+        class_manager=True,
+        approver=True,
+    )
+
+    for row in markup.inline_keyboard:
+        for item in row:
+            assert item.callback_data.startswith("v2:")
+            assert item.text != item.callback_data
+            assert " " not in item.callback_data
