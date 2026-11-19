@@ -40,3 +40,26 @@ Private-chat navigation is button-driven. Group activities and the group-specifi
 ## Data safety
 
 PostgreSQL is the source of truth. Keep the Railway persistent volume attached and arrange periodic database backups before storing real student/class information. The MVP does not yet provide an in-app backup/restore workflow.
+
+
+## Persistent conversation state and update idempotency
+
+The production bot stores aiogram FSM state/data in PostgreSQL (`fsm_state_records`), not process memory. A bot restart or Railway redeploy therefore does not erase an in-progress form. Telegram updates are claimed in `processed_updates` with a short processing lease; already processed updates are ignored, while failed or expired leases may be retried. Keep the production PostgreSQL volume and database backups intact.
+
+## Class data removal
+
+Class managers, school administrators and platform administrators can soft-delete a class subject with `/subject_remove <class_id> <subject_id>` and a timetable slot with `/timetable_remove <class_id> <entry_id>` in the bot's private chat. The commands retain the underlying rows and write an audit event. Re-adding a removed subject or timetable slot restores the existing soft-deleted link/slot rather than creating a duplicate. A trusted approver is not a class manager and cannot archive class data.
+
+## Approved-record cancellation
+
+Users who can approve class records (class manager, trusted approver, school administrator or platform administrator) can cancel an approved record using `/cancel_record <class_id> homework|exam|report <record_id>` in private chat, or `/cancel_record homework|exam|report <record_id>` in its connected group. Cancellation changes the record status, records an audit/approval event and cancels reminders that have not started processing.
+
+## Reminder delivery reconciliation
+
+The worker marks a reminder `uncertain` rather than automatically retrying when a network/server failure or an expired worker lease makes Telegram's delivery result ambiguous. This avoids an automatic duplicate send, but it cannot guarantee exactly-once delivery because Telegram's send API does not provide an idempotency key for these messages.
+
+A platform administrator can list ambiguous jobs with `/reminder_uncertain`, then use `/reminder_resolve <job_id> sent` to mark a job as already delivered, or `/reminder_resolve <job_id> retry` to requeue it. The latter can produce a duplicate if Telegram had accepted the original send. The retry counter resets on this explicit manual requeue.
+
+## Migration rollback policy
+
+Migration `0001_initial` no longer drops the complete schema on downgrade. Migrations `0003_reliability_state` and `0004_daily_report_cancelled_at` also refuse automatic downgrade because doing so would discard live conversation state, update history or cancellation history. For recovery, take/restore a verified database backup or write a reviewed forward migration; do not issue `alembic downgrade base` against production.
