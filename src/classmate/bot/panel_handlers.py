@@ -36,7 +36,6 @@ from classmate.db.models import (
     NotificationPreference,
     School,
     SchoolMembership,
-    Subject,
     TimetableEntry,
     User,
 )
@@ -60,7 +59,6 @@ from classmate.services.records import (
     list_homework,
     list_homework_for_lesson,
     list_pending_records,
-    list_reports,
     list_daily_summary,
     list_current_timetable,
     normalize_subject_name,
