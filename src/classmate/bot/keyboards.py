@@ -116,3 +116,28 @@ def wizard_cancel_keyboard() -> ReplyKeyboardMarkup:
         resize_keyboard=True,
         is_persistent=True,
     )
+
+
+
+def group_menu_keyboard(*, can_review: bool = False) -> InlineKeyboardMarkup:
+    """Compact, class-scoped menu for a connected Telegram group."""
+    rows = [
+        [
+            InlineKeyboardButton(text="📚 تکالیف", callback_data="group:homework"),
+            InlineKeyboardButton(text="📝 امتحانات", callback_data="group:exams"),
+        ],
+        [
+            InlineKeyboardButton(text="📅 برنامه هفتگی", callback_data="group:week"),
+            InlineKeyboardButton(text="🗒 امروز", callback_data="group:today"),
+        ],
+        [
+            InlineKeyboardButton(text="➕ ثبت تکلیف", callback_data="new:homework"),
+            InlineKeyboardButton(text="➕ ثبت امتحان", callback_data="new:exam"),
+        ],
+        [InlineKeyboardButton(text="🗒 ثبت گزارش روزانه", callback_data="new:report")],
+    ]
+    if can_review:
+        rows.append(
+            [InlineKeyboardButton(text="🕓 صف بررسی", callback_data="group:pending")]
+        )
+    return InlineKeyboardMarkup(inline_keyboard=rows)
