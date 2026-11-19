@@ -12,7 +12,6 @@ from sqlalchemy.ext.asyncio import AsyncSession
 
 from classmate.bot.formatters import _format_exams, _format_homework, _pending_message
 from classmate.bot.keyboards import (
-    approval_keyboard,
     class_picker,
     main_menu,
     main_reply_keyboard,
@@ -30,13 +29,12 @@ from classmate.db.models import (
     School,
     SchoolMembership,
     NotificationPreference,
-    ReminderJob,
     Subject,
     TimetableEntry,
     User,
 )
 from classmate.db.session import SessionFactory
-from classmate.domain.enums import ENTITY_LABELS, EntityType, RecordStatus, Role
+from classmate.domain.enums import RecordStatus, Role
 from classmate.domain.dates import (
     jalali_date,
     jalali_datetime,
@@ -44,7 +42,6 @@ from classmate.domain.dates import (
     parse_school_datetime,
 )
 from classmate.services.permissions import (
-    can_approve,
     ensure_user,
     get_class_with_school,
     hash_code,
@@ -54,22 +51,18 @@ from classmate.services.permissions import (
 )
 from classmate.services.records import (
     add_subject,
-    approve_record,
     audit,
     create_daily_report,
     create_exam,
     create_homework,
-    cancel_approved_record,
     get_group_context,
     get_subject,
     get_or_create_next_lesson,
     list_exams,
     list_homework,
     list_homework_for_lesson,
-    list_pending_records,
     list_reports,
     normalize_subject_name,
-    reject_record,
 )
 
 router = Router(name="classmate")
