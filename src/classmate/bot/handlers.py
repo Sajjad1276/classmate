@@ -921,7 +921,7 @@ async def new_record_callback(callback: CallbackQuery, state: FSMContext, bot: B
         return
     await callback.answer()
     try:
-        await callback.message.edit_text("فرایند ثبت آغاز شد؛ پاسخ‌ها را به‌ترتیب وارد کن.")
+        await callback.message.delete()
     except Exception:
         pass
     await _start_wizard(callback.message.chat.id, callback.from_user, kind, state, bot)
