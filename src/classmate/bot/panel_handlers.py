@@ -495,7 +495,7 @@ async def _show_action(
             state,
             bot,
             "🔎 پرسشت را درباره تکلیف یا امتحان بنویس. جست‌وجو بر اساس اطلاعات تأییدشده است.",
-            _markup([], f"ui:class:{class_id}"),
+            _markup([], "ui:cancel_input"),
         )
         return
     else:
@@ -676,6 +676,8 @@ async def _show_form(
 def _parent_for_form(form_name: str, class_id: int | None) -> str:
     if form_name == "join":
         return "ui:classes"
+    if form_name == "search" and class_id is not None:
+        return f"ui:class:{class_id}"
     if class_id is not None:
         return f"ui:manage:{class_id}"
     if form_name in {"school_new", "school_admin_add"}:
@@ -756,10 +758,16 @@ async def main_button_handler(message: Message, state: FSMContext, bot: Bot) -> 
         await message.delete()
     except TelegramBadRequest:
         pass
-    if label in {"❌ لغو عملیات", "⬅️ بازگشت به منو"}:
+    if label == "⬅️ بازگشت":
+        if panel_message_id is not None:
+            try:
+                await bot.delete_message(message.chat.id, panel_message_id)
+            except TelegramBadRequest:
+                pass
+        await state.clear()
         _, roles = await _current_user(message)
         await message.answer(
-            "عملیات جاری لغو شد. اطلاعات ناقص ذخیره نشده است.",
+            "به منوی اصلی برگشتی.",
             reply_markup=main_reply_keyboard(
                 is_platform_admin=roles["platform"],
                 is_school_admin=roles["school"],
@@ -967,6 +975,10 @@ async def cancel_input(callback: CallbackQuery, state: FSMContext):
         await _show_platform_panel(callback, state)
     elif parent == "ui:school":
         await _show_school_panel(callback, state)
+    elif parent == "ui:classes":
+        await _show_classes(callback, state, callback.from_user)
+    elif parent.startswith("ui:class:"):
+        await _show_class_panel(callback, state, int(parent.rsplit(":", 1)[1]))
     elif class_id:
         await _show_management_from_message(callback.message, state, callback.bot, class_id, callback.from_user)
     else:
