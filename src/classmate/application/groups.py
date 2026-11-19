@@ -7,8 +7,7 @@ from classmate.application.access import require_class_role
 from classmate.db.models import AcademicYear, ClassGroup, School, User
 from classmate.domain.enums import Role
 from classmate.domain.errors import Conflict, NotFound
-from classmate.services.permissions import hash_code
-from classmate.application.classrooms import make_invite_code
+from classmate.domain.codes import generate_code, hash_code
 
 
 async def issue_class_group_link(
@@ -20,7 +19,7 @@ async def issue_class_group_link(
     )
     if class_group is None:
         raise NotFound("کلاس پیدا نشد.")
-    code = make_invite_code()
+    code = generate_code()
     class_group.group_link_code_hash = hash_code(code)
     class_group.group_link_code_expires_at = datetime.now(timezone.utc) + timedelta(minutes=30)
     await session.flush()
