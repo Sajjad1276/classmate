@@ -12,6 +12,7 @@ from classmate.bot.approval_handlers import router as approval_router
 from classmate.bot.group_handlers import router as group_router
 from classmate.bot.private_handlers import router as private_router
 from classmate.bot.wizard_handlers import router as wizard_router
+from classmate.bot.management_handlers import router as management_router
 from classmate.bot.middlewares import ProcessedUpdateMiddleware
 from classmate.db.fsm_storage import PostgresFSMStorage
 from classmate.db.session import SessionFactory
@@ -39,6 +40,7 @@ async def main() -> None:
     dispatcher.include_router(private_router)
     dispatcher.include_router(wizard_router)
     dispatcher.include_router(router)
+    dispatcher.include_router(management_router)
     dispatcher.include_router(panel_router)
     logging.getLogger(__name__).info("Starting ClassMate bot polling")
     try:
