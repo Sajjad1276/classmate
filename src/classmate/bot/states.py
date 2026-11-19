@@ -12,3 +12,7 @@ class RecordWizard(StatesGroup):
     exam_datetime = State()
     report_date = State()
     report_body = State()
+
+
+class PanelInput(StatesGroup):
+    input = State()
