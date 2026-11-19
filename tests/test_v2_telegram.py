@@ -75,3 +75,15 @@ def test_reminder_toggle_callback_contains_desired_next_state():
 
     assert "v2:reminder:homework:42:0" in callbacks
     assert "v2:reminder:exams:42:1" in callbacks
+
+
+def test_v2_main_dashboard_exposes_class_join_action():
+    markup = main_keyboard(
+        platform_admin=False,
+        school_admin=False,
+        class_manager=False,
+        approver=False,
+    )
+
+    assert "v2:join" in _callbacks(markup)
+    assert "🔑 عضویت با کد" in _labels(markup)
