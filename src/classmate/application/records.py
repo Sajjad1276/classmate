@@ -312,6 +312,17 @@ async def review_record(
         )
     )
     await session.flush()
+    if approve and record_type in {RecordType.HOMEWORK, RecordType.EXAM}:
+        from classmate.application.reminders import schedule_record
+
+        class_group, _, school = await require_class_access(session, actor, class_id)
+        await schedule_record(
+            session,
+            class_group=class_group,
+            record_type=record_type,
+            record=record,
+            timezone_name=school.timezone,
+        )
     return record
 
 
