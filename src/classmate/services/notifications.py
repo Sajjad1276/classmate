@@ -1,4 +1,4 @@
-from datetime import datetime, time, timedelta
+from datetime import datetime, time, timedelta, timezone
 from html import escape
 from zoneinfo import ZoneInfo
 
@@ -16,6 +16,95 @@ from classmate.db.models import (
     ReminderJob,
     Subject,
 )
+
+
+async def update_user_reminder_preference(
+    session: AsyncSession,
+    user: User,
+    class_group: ClassGroup,
+    school_timezone: str,
+    category: str,
+    enabled: bool,
+) -> tuple[int, int]:
+    """Persist one category preference and reconcile this user's queued reminders."""
+    if category not in {"homework", "exams"}:
+        raise ValueError("Unsupported reminder category")
+
+    values = {
+        "user_id": user.id,
+        "class_id": class_group.id,
+        "homework_enabled": enabled if category == "homework" else True,
+        "exams_enabled": enabled if category == "exams" else True,
+    }
+    update_values = {
+        "homework_enabled" if category == "homework" else "exams_enabled": enabled
+    }
+    statement = pg_insert(NotificationPreference).values(**values)
+    await session.execute(
+        statement.on_conflict_do_update(
+            constraint="uq_notification_user_class",
+            set_=update_values,
+        )
+    )
+
+    if not enabled:
+        entity_types = ["homework"] if category == "homework" else ["exam"]
+        jobs = (
+            await session.execute(
+                select(ReminderJob)
+                .where(
+                    ReminderJob.class_id == class_group.id,
+                    ReminderJob.target_type == "private",
+                    ReminderJob.target_id == user.telegram_id,
+                    ReminderJob.entity_type.in_(entity_types),
+                    ReminderJob.status.in_(["pending", "retry", "processing"]),
+                )
+                .with_for_update()
+            )
+        ).scalars().all()
+        cancelled = 0
+        for job in jobs:
+            job.status = "cancelled"
+            job.locked_at = None
+            cancelled += 1
+        return 0, cancelled
+
+    now_utc = datetime.now(timezone.utc)
+    if category == "homework":
+        upcoming = (
+            await session.scalars(
+                select(Homework).where(
+                    Homework.class_id == class_group.id,
+                    Homework.status == "APPROVED",
+                    Homework.due_on >= datetime.now(ZoneInfo(school_timezone)).date(),
+                )
+            )
+        ).all()
+        entity_type = "homework"
+    else:
+        upcoming = (
+            await session.scalars(
+                select(Exam).where(
+                    Exam.class_id == class_group.id,
+                    Exam.status == "APPROVED",
+                    Exam.scheduled_at >= now_utc,
+                )
+            )
+        ).all()
+        entity_type = "exam"
+
+    created = 0
+    for record in upcoming:
+        created += await schedule_approved_record_reminders(
+            session,
+            class_group,
+            record,
+            entity_type,
+            school_timezone,
+            target_user_id=user.id,
+            include_group=False,
+        )
+    return created, 0
 
 
 async def schedule_approved_record_reminders(
