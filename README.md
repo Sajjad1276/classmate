@@ -25,12 +25,13 @@ The local Compose stack starts PostgreSQL, applies Alembic migrations, then runs
 
 1. Put the platform owner's numeric Telegram ID in `BOOTSTRAP_ADMIN_IDS`.
 2. Open a private chat with the bot and press **Start**. If the ID is configured correctly, the role-specific **پنل مدیر کل** button appears.
-3. Open the platform panel and create the school and first academic year.
-4. Open **مدیریت مدرسه** to create classes and appoint school/class managers.
-5. Open **مدیریت کلاس** for a class to create group/student invitation codes, add subjects and configure timetable slots.
-6. Students press **عضویت در کلاس** in the private bot and enter the invitation code.
-7. Use **ثبت اطلاعات** to submit homework, exams and daily reports.
-8. Trusted approvers open **صف بررسی** and approve or reject submissions.
+3. Open the platform panel, press **ایجاد مدرسه** and enter only the school name and academic-year name in two short steps.
+4. Press **افزودن ربات به گروه مدرسه**, choose the school's Telegram group and add ClassMate. The bot links the group automatically; no group ID or typed /connect command is needed.
+5. Open **مدیریت مدرسه** to create classes and appoint school/class managers.
+6. Open **مدیریت کلاس** for a class to create student invitation codes, add subjects and configure timetable slots.
+7. Students press **عضویت در کلاس** in the private bot and enter the invitation code.
+8. Use **ثبت اطلاعات** to submit homework, exams and daily reports.
+9. Trusted approvers open **صف بررسی** and approve or reject submissions.
 
 Private-chat actions are started from Telegram keyboard buttons and inline panels; users do not need to type slash commands. See [the button and panel guide](docs/COMMANDS.md).
 
@@ -45,11 +46,11 @@ Private-chat actions are started from Telegram keyboard buttons and inline panel
 - **صف بررسی** — available only to approvers for classes where they have permission.
 - **مدیریت کلاس / مدیریت مدرسه / پنل مدیر کل** — displayed only for users with the corresponding application role.
 
-Each inline panel edits the same panel message. Back buttons return to the parent panel, and wizard sessions have a return-to-menu control. Hiding a button is only a UI convenience; each operation independently verifies authorization.
+Opening an inner panel hides the persistent Reply Keyboard. One Back button closes the current panel and returns to its parent (or restores the main keyboard at the root). School creation asks only for school name and academic year; it then provides a one-time group-add link. Hiding a button is only a UI convenience; each operation independently verifies authorization.
 
 ## Group interface status
 
-The private interface is button-driven. Group workflows are a separate follow-up phase and are not considered complete in this release. Keep Telegram Privacy Mode enabled; the bot does not read arbitrary group messages.
+The private interface is button-driven, and each school can now be linked to one central Telegram group through Telegram's startgroup deep link. Group-side menus, school notifications, class-specific group workflows and group moderation are the next implementation phase. Keep Telegram Privacy Mode enabled; the bot does not read arbitrary group messages.
 
 ## Security
 
