@@ -1,7 +1,7 @@
-from datetime import date, datetime, time, timedelta
+from datetime import date, datetime, time, timedelta, timezone
 from zoneinfo import ZoneInfo
 
-from sqlalchemy import select
+from sqlalchemy import or_, select
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from classmate.db.models import (
@@ -18,6 +18,7 @@ from classmate.db.models import (
     School,
     Subject,
     TimetableEntry,
+    User,
 )
 from classmate.domain.dates import persian_weekday
 
@@ -59,6 +60,38 @@ async def get_subject(
 
 
 
+def next_timetable_occurrence(
+    entry: TimetableEntry,
+    now: datetime,
+) -> tuple[datetime, datetime | None] | None:
+    """Resolve the next valid weekly occurrence, including future valid_from dates."""
+    if now.tzinfo is None:
+        raise ValueError("The reference time must be timezone-aware.")
+
+    first_date = now.date()
+    if entry.valid_from and entry.valid_from > first_date:
+        first_date = entry.valid_from
+
+    for offset in range(8):
+        lesson_date = first_date + timedelta(days=offset)
+        if entry.valid_until and lesson_date > entry.valid_until:
+            return None
+        if persian_weekday(lesson_date) != entry.weekday:
+            continue
+        lesson_start = datetime.combine(
+            lesson_date, entry.starts_at or time(8, 0), tzinfo=now.tzinfo
+        )
+        if lesson_start <= now:
+            continue
+        lesson_end = (
+            datetime.combine(lesson_date, entry.ends_at, tzinfo=now.tzinfo)
+            if entry.ends_at
+            else None
+        )
+        return lesson_start, lesson_end
+    return None
+
+
 async def get_or_create_next_lesson(
     session: AsyncSession,
     class_id: int,
@@ -77,28 +110,11 @@ async def get_or_create_next_lesson(
         )
     ).scalars().all()
 
-    occurrences: list[tuple[datetime, datetime | None]] = []
-    for entry in entries:
-        for offset in range(15):
-            lesson_date = now.date() + timedelta(days=offset)
-            if persian_weekday(lesson_date) != entry.weekday:
-                continue
-            if entry.valid_from and lesson_date < entry.valid_from:
-                continue
-            if entry.valid_until and lesson_date > entry.valid_until:
-                continue
-            lesson_start = datetime.combine(
-                lesson_date, entry.starts_at or time(8, 0), tzinfo=zone
-            )
-            if lesson_start <= now:
-                continue
-            lesson_end = (
-                datetime.combine(lesson_date, entry.ends_at, tzinfo=zone)
-                if entry.ends_at
-                else None
-            )
-            occurrences.append((lesson_start, lesson_end))
-            break
+    occurrences = [
+        occurrence
+        for entry in entries
+        if (occurrence := next_timetable_occurrence(entry, now)) is not None
+    ]
 
     if not occurrences:
         return None
@@ -270,6 +286,29 @@ async def audit(
     )
 
 
+async def get_record_submitter_telegram_id(
+    session: AsyncSession,
+    entity_type: str,
+    entity_id: int,
+    class_id: int,
+) -> int | None:
+    """Find a submitter who has opened a private chat with the bot."""
+    model_map = {"homework": Homework, "exam": Exam, "report": DailyReport}
+    model = model_map.get(entity_type)
+    if model is None:
+        return None
+    return await session.scalar(
+        select(User.telegram_id)
+        .join(model, model.created_by == User.id)
+        .where(
+            model.id == entity_id,
+            model.class_id == class_id,
+            User.is_active.is_(True),
+            User.private_chat_started.is_(True),
+        )
+    )
+
+
 async def approve_record(
     session: AsyncSession,
     entity_type: str,
@@ -314,6 +353,48 @@ async def approve_record(
             session, class_group, record, entity_type, timezone_name
         )
     return True, "اطلاعات تأیید شد."
+
+
+async def cancel_approved_record(
+    session: AsyncSession,
+    entity_type: str,
+    entity_id: int,
+    actor_id: int,
+    school_id: int,
+    class_id: int,
+) -> tuple[bool, str]:
+    """Cancel an approved homework/exam without deleting its audit history."""
+    model_map = {"homework": Homework, "exam": Exam}
+    model = model_map.get(entity_type)
+    if model is None:
+        return False, "فقط تکلیف یا امتحان قابل لغو است."
+
+    record = await session.scalar(
+        select(model)
+        .where(model.id == entity_id, model.class_id == class_id)
+        .with_for_update()
+    )
+    if record is None:
+        return False, "رکورد موردنظر پیدا نشد."
+    if record.status != "APPROVED":
+        return False, "این رکورد دیگر در وضعیت تأییدشده نیست."
+
+    record.status = "CANCELLED"
+    record.cancelled_at = datetime.now(timezone.utc)
+    await set_reminders_cancelled(session, entity_type, entity_id)
+    await audit(
+        session,
+        school_id,
+        class_id,
+        actor_id,
+        "record_cancelled",
+        entity_type,
+        entity_id,
+        {"status": "CANCELLED"},
+        {"status": "APPROVED"},
+    )
+    label = "تکلیف" if entity_type == "homework" else "امتحان"
+    return True, f"✅ {label} لغو شد؛ یادآوری‌های ارسال‌نشده نیز لغو شدند."
 
 
 async def reject_record(
@@ -369,7 +450,11 @@ async def list_exams(session: AsyncSession, class_id: int) -> list[tuple[Exam, S
             await session.execute(
                 select(Exam, Subject)
                 .join(Subject, Exam.subject_id == Subject.id)
-                .where(Exam.class_id == class_id, Exam.status == "APPROVED")
+                .where(
+                    Exam.class_id == class_id,
+                    Exam.status == "APPROVED",
+                    Exam.scheduled_at >= datetime.now(timezone.utc),
+                )
                 .order_by(Exam.scheduled_at.asc())
                 .limit(30)
             )
@@ -388,6 +473,7 @@ async def list_reports(session: AsyncSession, class_id: int, report_date: date):
                     DailyReport.status == "APPROVED",
                 )
                 .order_by(DailyReport.created_at.desc())
+                .limit(4)
             )
         ).scalars().all()
     )
@@ -406,6 +492,83 @@ async def list_pending_records(session: AsyncSession, class_id: int):
     return pending
 
 
+def local_day_window(local_date: date, timezone_name: str) -> tuple[datetime, datetime]:
+    """Return the timezone-aware [start, end) boundaries of a local calendar day."""
+    zone = ZoneInfo(timezone_name)
+    start = datetime.combine(local_date, time.min, tzinfo=zone)
+    next_day = local_date + timedelta(days=1)
+    end = datetime.combine(next_day, time.min, tzinfo=zone)
+    return start, end
+
+
+async def list_daily_summary(
+    session: AsyncSession,
+    class_id: int,
+    local_date: date,
+    timezone_name: str,
+):
+    """Return today's approved report, due homework and exams scheduled today."""
+    start, end = local_day_window(local_date, timezone_name)
+    reports = await list_reports(session, class_id, local_date)
+    homework = list(
+        (
+            await session.execute(
+                select(Homework, Subject)
+                .join(Subject, Homework.subject_id == Subject.id)
+                .where(
+                    Homework.class_id == class_id,
+                    Homework.status == "APPROVED",
+                    Homework.due_on == local_date,
+                )
+                .order_by(Homework.created_at.desc())
+                .limit(5)
+            )
+        ).all()
+    )
+    exams = list(
+        (
+            await session.execute(
+                select(Exam, Subject)
+                .join(Subject, Exam.subject_id == Subject.id)
+                .where(
+                    Exam.class_id == class_id,
+                    Exam.status == "APPROVED",
+                    Exam.scheduled_at >= start,
+                    Exam.scheduled_at < end,
+                )
+                .order_by(Exam.scheduled_at.asc())
+                .limit(5)
+            )
+        ).all()
+    )
+    return reports, homework, exams
+
+
+async def list_current_timetable(
+    session: AsyncSession,
+    class_id: int,
+    local_date: date,
+) -> list[tuple[TimetableEntry, Subject]]:
+    """Return timetable slots valid on the requested local date."""
+    query = (
+        select(TimetableEntry, Subject)
+        .join(Subject, TimetableEntry.subject_id == Subject.id)
+        .where(
+            TimetableEntry.class_id == class_id,
+            or_(
+                TimetableEntry.valid_from.is_(None),
+                TimetableEntry.valid_from <= local_date,
+            ),
+            or_(
+                TimetableEntry.valid_until.is_(None),
+                TimetableEntry.valid_until >= local_date,
+            ),
+        )
+        .order_by(TimetableEntry.weekday, TimetableEntry.period)
+    )
+    return list((await session.execute(query)).all())
+
+
 async def set_reminders_cancelled(
     session: AsyncSession, entity_type: str, entity_id: int
 ) -> None:
@@ -414,9 +577,10 @@ async def set_reminders_cancelled(
             select(ReminderJob).where(
                 ReminderJob.entity_type == entity_type,
                 ReminderJob.entity_id == entity_id,
-                ReminderJob.status.in_(["pending", "retry"]),
+                ReminderJob.status.in_(["pending", "retry", "processing"]),
             )
         )
     ).scalars().all()
     for job in jobs:
         job.status = "cancelled"
+        job.locked_at = None

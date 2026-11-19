@@ -36,9 +36,33 @@ The bot uses long polling and Telegram Privacy Mode remains enabled. During grou
 
 FSM state currently uses in-memory storage. A bot restart can interrupt an unfinished form, but never destroys submitted records or reminders. Redis-backed FSM storage can be added if persistent wizard continuity is required.
 
-## Invitation codes\n\nGroup-link codes are stored as SHA-256 hashes and expire after 30 minutes; a successful group connection consumes the code. Student join codes are reusable for seven days. Expired codes are rejected at query time.\n\n## Next-lesson resolver\n\nThe resolver reads a class's timetable entries for a subject, evaluates the next future weekday/time in the school's timezone and creates/reuses a LessonSession row. Homework may reference that session through due_session_id and also stores the local due date for reminders. The deterministic /ask flow recognizes next-session phrasing and returns approved work linked to that session or due on the same local date. This does not infer holidays or exceptional schedule changes.\n\n## Reminder worker
+## Invitation codes
 
-Workers claim due reminder rows via PostgreSQL FOR UPDATE SKIP LOCKED, set a processing lease, send, then mark success or schedule exponential retry. Expired leases are recovered after worker crashes. The queue is durable and independent of the bot process.
+Group-link codes are stored as SHA-256 hashes and expire after 30 minutes; a successful group connection consumes the code. Student join codes are reusable for seven days. Expired codes are rejected at query time.
+
+## Next-lesson resolver
+
+The resolver reads a class's timetable entries for a subject, evaluates the next future weekday/time in the school's timezone and creates/reuses a LessonSession row. The search begins no earlier than valid_from, checks a full weekly cycle, and stops at valid_until. Homework may reference that session through due_session_id and also stores the local due date for reminders. The deterministic /ask flow recognizes next-session phrasing and returns approved work linked to that session or due on the same local date. This does not infer holidays or exceptional schedule changes.
+
+## Daily summaries and reporting
+
+A class may have multiple DailyReport submissions on the same local date. The unique class/date constraint was replaced by a non-unique lookup index; migration 0003 preserves existing report rows. The /today command and class-group dashboard use the school's timezone and a half-open local-day interval [midnight, next midnight) for scheduled exams, which avoids assuming every local day is exactly 24 hours. Homework is filtered by its local due date.
+
+## Reminder worker
+
+Workers claim due reminder rows via PostgreSQL FOR UPDATE SKIP LOCKED, set a processing lease, send, then mark success or schedule exponential retry. Recovery also claims expired leases with SKIP LOCKED. Every claim receives a lease timestamp token; a worker may finish only while the persisted row is still processing under that exact token, preventing a delayed worker from overwriting a newer claim. The queue is durable and independent of the bot process.
+
+Delivery is at-least-once, not exactly-once: if Telegram accepts a message and the worker crashes before persisting success, the recovered job may be sent again. Dedupe keys prevent duplicate scheduling for the same record/target/time, but cannot make Telegram delivery transactional with PostgreSQL.
+
+## Private reminder preferences
+
+NotificationPreference is scoped to user and class, with homework and exam categories independently enabled. The preference UI uses a PostgreSQL upsert to avoid duplicate rows on concurrent clicks. Turning a category off cancels queued/retry/processing private jobs for that user and class under row locks. Turning it on reconciles future APPROVED homework/exams by rescheduling only that user's private jobs; cancelled dedupe rows are reactivated and new rows use conflict-safe inserts. Group targets are not modified by a user's private preference. Users who have not started a private chat are excluded from private reminder scheduling.
+
+## Telegram group interface and review
+
+A school may have one central group binding; each class may have its own group binding. A connected class group exposes an inline menu for approved homework, future exams, currently valid timetable slots, a local-day summary, new submissions and the review queue. The central school group is not treated as a class record feed. Group binding requires the invoking user to be a Telegram administrator/creator and the bot to have sufficient administrator visibility for membership checks.
+
+Review actions re-check class-level permissions and lock the record row. Only PENDING records can be approved; approval is rejected when the reviewer is the submitter. Approval/rejection is audited. On success, the submitter receives a private outcome message only if the user has previously started a private chat. Telegram notification failures are logged and do not roll back the committed review decision.
 
 ## Railway topology
 

@@ -20,37 +20,63 @@ LOCK_TIMEOUT = timedelta(minutes=10)
 
 
 class ReminderJobSnapshot:
-    def __init__(self, id: int, target_id: int, message_text: str, attempts: int):
+    def __init__(
+        self,
+        id: int,
+        target_id: int,
+        message_text: str,
+        attempts: int,
+        lease_started_at: datetime,
+    ):
         self.id = id
         self.target_id = target_id
         self.message_text = message_text
         self.attempts = attempts
+        self.lease_started_at = lease_started_at
+
+
+def has_active_lease(job: ReminderJob, lease_started_at: datetime) -> bool:
+    return job.status == "processing" and job.locked_at == lease_started_at
+
+
+def stale_lease_recovery_status(attempts: int) -> str:
+    return "failed" if attempts >= MAX_ATTEMPTS else "retry"
 
 
 async def claim_due_job() -> ReminderJobSnapshot | None:
     """Claim one due job with SKIP LOCKED so multiple workers do not claim the same row."""
     async with SessionFactory() as session:
         async with session.begin():
-            cutoff = datetime.now(timezone.utc) - LOCK_TIMEOUT
+            now = datetime.now(timezone.utc)
+            cutoff = now - LOCK_TIMEOUT
             stale = (
                 await session.execute(
-                    select(ReminderJob).where(
+                    select(ReminderJob)
+                    .where(
                         ReminderJob.status == "processing",
                         ReminderJob.locked_at < cutoff,
                     )
+                    .order_by(ReminderJob.locked_at, ReminderJob.id)
+                    .with_for_update(skip_locked=True)
+                    .limit(100)
                 )
             ).scalars().all()
             for item in stale:
-                item.status = "retry"
-                item.scheduled_at = datetime.now(timezone.utc)
-                item.last_error = "Recovered after an interrupted worker lease."
+                item.status = stale_lease_recovery_status(item.attempts)
+                if item.status == "retry":
+                    item.scheduled_at = now
+                    item.last_error = "Recovered after an interrupted worker lease."
+                else:
+                    item.last_error = (
+                        "Retry limit reached after the worker lease expired."
+                    )
                 item.locked_at = None
 
             job = await session.scalar(
                 select(ReminderJob)
                 .where(
                     ReminderJob.status.in_(["pending", "retry"]),
-                    ReminderJob.scheduled_at <= datetime.now(timezone.utc),
+                    ReminderJob.scheduled_at <= now,
                 )
                 .order_by(ReminderJob.scheduled_at, ReminderJob.id)
                 .with_for_update(skip_locked=True)
@@ -62,14 +88,34 @@ async def claim_due_job() -> ReminderJobSnapshot | None:
             job.locked_at = datetime.now(timezone.utc)
             job.attempts += 1
             await session.flush()
-            return ReminderJobSnapshot(job.id, job.target_id, job.message_text, job.attempts)
+            return ReminderJobSnapshot(
+                job.id,
+                job.target_id,
+                job.message_text,
+                job.attempts,
+                job.locked_at,
+            )
 
 
-async def finish_job(job_id: int, error: str | None = None, attempts: int = 1) -> None:
+async def lease_is_current(job_id: int, lease_started_at: datetime) -> bool:
+    """Re-check a lease immediately before performing the external Telegram send."""
+    async with SessionFactory() as session:
+        async with session.begin():
+            job = await session.get(ReminderJob, job_id)
+            return job is not None and has_active_lease(job, lease_started_at)
+
+
+async def finish_job(
+    job_id: int,
+    lease_started_at: datetime,
+    error: str | None = None,
+    attempts: int = 1,
+) -> None:
     async with SessionFactory() as session:
         async with session.begin():
             job = await session.get(ReminderJob, job_id, with_for_update=True)
-            if job is None:
+            if job is None or not has_active_lease(job, lease_started_at):
+                logger.warning("Ignoring stale reminder worker result for job %s", job_id)
                 return
             job.locked_at = None
             if error is None:
@@ -107,15 +153,18 @@ async def run_worker() -> None:
                 await asyncio.sleep(max(1, settings.reminder_poll_seconds))
                 continue
             try:
+                if not await lease_is_current(job.id, job.lease_started_at):
+                    logger.info("Skipping cancelled or superseded reminder job %s", job.id)
+                    continue
                 await bot.send_message(job.target_id, job.message_text)
-                await finish_job(job.id)
+                await finish_job(job.id, job.lease_started_at)
                 logger.info("Reminder job %s delivered", job.id)
             except TelegramAPIError as exc:
                 logger.warning("Reminder job %s failed: %s", job.id, exc)
-                await finish_job(job.id, str(exc), job.attempts)
+                await finish_job(job.id, job.lease_started_at, str(exc), job.attempts)
             except Exception as exc:
                 logger.exception("Unexpected error sending reminder job %s", job.id)
-                await finish_job(job.id, str(exc), job.attempts)
+                await finish_job(job.id, job.lease_started_at, str(exc), job.attempts)
     finally:
         await bot.session.close()
         await dispose_engine()

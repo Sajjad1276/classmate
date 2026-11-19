@@ -116,3 +116,76 @@ def wizard_cancel_keyboard() -> ReplyKeyboardMarkup:
         resize_keyboard=True,
         is_persistent=True,
     )
+
+
+
+def group_menu_keyboard(*, can_review: bool = False) -> InlineKeyboardMarkup:
+    """Compact, class-scoped menu for a connected Telegram group."""
+    rows = [
+        [
+            InlineKeyboardButton(text="📚 تکالیف", callback_data="group:homework"),
+            InlineKeyboardButton(text="📝 امتحانات", callback_data="group:exams"),
+        ],
+        [
+            InlineKeyboardButton(text="📅 برنامه هفتگی", callback_data="group:week"),
+            InlineKeyboardButton(text="🗒 امروز", callback_data="group:today"),
+        ],
+        [
+            InlineKeyboardButton(text="➕ ثبت تکلیف", callback_data="new:homework"),
+            InlineKeyboardButton(text="➕ ثبت امتحان", callback_data="new:exam"),
+        ],
+        [InlineKeyboardButton(text="🗒 ثبت گزارش روزانه", callback_data="new:report")],
+    ]
+    if can_review:
+        rows.append(
+            [InlineKeyboardButton(text="🕓 صف بررسی", callback_data="group:pending")]
+        )
+    return InlineKeyboardMarkup(inline_keyboard=rows)
+
+
+
+def reminder_class_picker(classes: list[ClassGroup]) -> InlineKeyboardMarkup:
+    """Choose the class whose private reminder preferences should be edited."""
+    rows = [
+        [
+            InlineKeyboardButton(
+                text=f"🏫 {item.name[:48]}",
+                callback_data=f"reminders:class:{item.id}",
+            )
+        ]
+        for item in classes
+    ]
+    return InlineKeyboardMarkup(inline_keyboard=rows)
+
+
+def reminder_preferences_keyboard(
+    class_id: int,
+    *,
+    homework_enabled: bool,
+    exams_enabled: bool,
+) -> InlineKeyboardMarkup:
+    """Render current reminder state; each button carries the desired next value."""
+    homework_label = "🟢 تکالیف: روشن" if homework_enabled else "⚫ تکالیف: خاموش"
+    exams_label = "🟢 امتحان‌ها: روشن" if exams_enabled else "⚫ امتحان‌ها: خاموش"
+    return InlineKeyboardMarkup(
+        inline_keyboard=[
+            [
+                InlineKeyboardButton(
+                    text=homework_label,
+                    callback_data=f"reminders:set:homework:{class_id}:{int(not homework_enabled)}",
+                )
+            ],
+            [
+                InlineKeyboardButton(
+                    text=exams_label,
+                    callback_data=f"reminders:set:exams:{class_id}:{int(not exams_enabled)}",
+                )
+            ],
+            [
+                InlineKeyboardButton(
+                    text="⬅️ انتخاب کلاس دیگر",
+                    callback_data="reminders:list",
+                )
+            ],
+        ]
+    )

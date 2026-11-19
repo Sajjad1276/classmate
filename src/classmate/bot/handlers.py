@@ -4,10 +4,15 @@ from html import escape
 from zoneinfo import ZoneInfo
 
 from aiogram import Bot, F, Router
+from aiogram.exceptions import TelegramBadRequest
 from aiogram.filters import Command, CommandStart
 from aiogram.fsm.context import FSMContext
-from aiogram.types import BotCommandScopeChat, CallbackQuery, Message
-from sqlalchemy import or_, select
+from aiogram.types import (
+    BotCommandScopeChat,
+    CallbackQuery,
+    Message,
+)
+from sqlalchemy import func, or_, select
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from classmate.bot.keyboards import (
@@ -15,8 +20,11 @@ from classmate.bot.keyboards import (
     class_picker,
     main_menu,
     main_reply_keyboard,
+    group_menu_keyboard,
     wizard_cancel_keyboard,
     new_record_menu,
+    reminder_class_picker,
+    reminder_preferences_keyboard,
     subject_picker,
 )
 from classmate.bot.states import RecordWizard
@@ -40,6 +48,7 @@ from classmate.domain.dates import (
     parse_school_date,
     parse_school_datetime,
 )
+from classmate.services.notifications import update_user_reminder_preference
 from classmate.services.permissions import (
     can_approve,
     ensure_user,
@@ -63,9 +72,11 @@ from classmate.services.records import (
     list_homework,
     list_homework_for_lesson,
     list_pending_records,
-    list_reports,
     normalize_subject_name,
     reject_record,
+    list_daily_summary,
+    list_current_timetable,
+    get_record_submitter_telegram_id,
 )
 
 router = Router(name="classmate")
@@ -207,30 +218,102 @@ async def _pending_message(
             logger.exception("Could not post pending record to class group %s", class_group.id)
 
 
+TELEGRAM_SAFE_TEXT_LIMIT = 3600
+
+
+def _append_bounded(parts: list[str], block: str) -> bool:
+    """Append one complete HTML block only when the encoded message stays bounded."""
+    candidate = "\n\n".join([*parts, block])
+    # Telegram counts UTF-16 code units; escaped HTML entities are included here.
+    if len(candidate.encode("utf-16-le")) // 2 > TELEGRAM_SAFE_TEXT_LIMIT:
+        return False
+    parts.append(block)
+    return True
+
+
+def _homework_block(homework, subject, description_limit: int = 160) -> str:
+    due = jalali_date(homework.due_on) if homework.due_on else "نامشخص"
+    description = (homework.description or "")[:description_limit]
+    if homework.description and len(homework.description) > description_limit:
+        description += "…"
+    return (
+        f"• <b>{escape(subject.name[:40])}</b> — {escape(homework.title[:60])}\n"
+        f"  {escape(description)}\n  موعد: {due}"
+    )
+
+
+def _exam_block(exam, subject, timezone_name: str, scope_limit: int = 100) -> str:
+    scope = (exam.scope or "اعلام نشده")[:scope_limit]
+    if exam.scope and len(exam.scope) > scope_limit:
+        scope += "…"
+    return (
+        f"• <b>{escape(subject.name[:40])}</b> — {escape(exam.title[:60])}\n"
+        f"  محدوده: {escape(scope)}\n"
+        f"  زمان: {jalali_datetime(exam.scheduled_at, timezone_name)}"
+    )
+
+
 def _format_homework(rows) -> str:
     if not rows:
         return "هنوز تکلیف تأییدشده‌ای ثبت نشده است."
-    lines = ["📚 <b>تکالیف تأییدشده</b>"]
-    for homework, subject in rows:
-        due = jalali_date(homework.due_on) if homework.due_on else "نامشخص"
-        lines.append(
-            f"\n• <b>{escape(subject.name)}</b> — {escape(homework.title)}\n"
-            f"  {escape(homework.description)}\n  موعد: {due}"
-        )
-    return "\n".join(lines)
+    parts = ["📚 <b>تکالیف تأییدشده</b>"]
+    omitted = max(0, len(rows) - 8)
+    for homework, subject in rows[:8]:
+        if not _append_bounded(parts, _homework_block(homework, subject)):
+            omitted += 1
+    if omitted:
+        parts.append(f"ℹ️ {omitted} تکلیف دیگر به‌دلیل محدودیت طول پیام نمایش داده نشد.")
+    return "\n\n".join(parts)
 
 
 def _format_exams(rows, timezone_name: str) -> str:
     if not rows:
         return "امتحان آینده‌ای ثبت نشده است."
-    lines = ["📝 <b>امتحانات تأییدشده</b>"]
-    for exam, subject in rows:
-        lines.append(
-            f"\n• <b>{escape(subject.name)}</b> — {escape(exam.title)}\n"
-            f"  محدوده: {escape(exam.scope or 'اعلام نشده')}\n"
-            f"  زمان: {jalali_datetime(exam.scheduled_at, timezone_name)}"
-        )
-    return "\n".join(lines)
+    parts = ["📝 <b>امتحانات تأییدشده</b>"]
+    omitted = max(0, len(rows) - 8)
+    for exam, subject in rows[:8]:
+        if not _append_bounded(parts, _exam_block(exam, subject, timezone_name)):
+            omitted += 1
+    if omitted:
+        parts.append(f"ℹ️ {omitted} امتحان دیگر به‌دلیل محدودیت طول پیام نمایش داده نشد.")
+    return "\n\n".join(parts)
+
+
+def _format_daily_summary(reports, homework_rows, exam_rows, local_date, timezone_name: str) -> str:
+    parts = [f"🗓 <b>خلاصه امروز — {jalali_date(local_date)}</b>"]
+    omitted = max(0, len(reports) - 3) + max(0, len(homework_rows) - 4) + max(0, len(exam_rows) - 4)
+
+    if reports:
+        for report in reports[:3]:
+            title = escape((report.title or "گزارش روزانه")[:60])
+            body = (report.body or "")[:140]
+            if report.body and len(report.body) > 140:
+                body += "…"
+            block = f"🗒 <b>{title}</b>\n{escape(body)}"
+            if not _append_bounded(parts, block):
+                omitted += 1
+    else:
+        _append_bounded(parts, "🗒 گزارش تأییدشده‌ای برای امروز ثبت نشده است.")
+
+    if homework_rows:
+        _append_bounded(parts, "📚 <b>تکالیف موعددار امروز</b>")
+        for homework, subject in homework_rows[:4]:
+            if not _append_bounded(parts, _homework_block(homework, subject, 90)):
+                omitted += 1
+    else:
+        _append_bounded(parts, "📚 امروز تکلیف موعدداری ثبت نشده است.")
+
+    if exam_rows:
+        _append_bounded(parts, "📝 <b>امتحانات امروز</b>")
+        for exam, subject in exam_rows[:4]:
+            if not _append_bounded(parts, _exam_block(exam, subject, timezone_name, 70)):
+                omitted += 1
+    else:
+        _append_bounded(parts, "📝 امروز امتحانی ثبت نشده است.")
+
+    if omitted:
+        parts.append("ℹ️ موارد بیشتری وجود دارد که به‌دلیل محدودیت طول پیام در این خلاصه نمایش داده نشد.")
+    return "\n\n".join(parts)
 
 
 def _parse_pipe_args(raw: str, count: int) -> list[str]:
@@ -249,17 +332,37 @@ async def connect_school_group(message: Message, bot: Bot):
     if message.from_user is None or message.text is None:
         return
     payload = message.text.split(maxsplit=1)[1].strip()
+    try:
+        bot_profile = await bot.get_me()
+        bot_member = await bot.get_chat_member(message.chat.id, bot_profile.id)
+        if bot_member.status not in {"administrator", "creator"}:
+            await message.answer(
+                "برای اتصال، ابتدا ربات را در این گروه مدیر کن و سپس دوباره تلاش کن."
+            )
+            return
+        group_member = await bot.get_chat_member(message.chat.id, message.from_user.id)
+    except Exception:
+        await message.answer(
+            "امکان بررسی دسترسی مدیر گروه وجود ندارد. مطمئن شو ربات مدیر گروه است."
+        )
+        return
+    if group_member.status not in {"administrator", "creator"}:
+        await message.answer("فقط مدیر گروه تلگرام می‌تواند اتصال مدرسه را انجام دهد.")
+        return
 
     async with SessionFactory() as session:
         async with session.begin():
             actor = await _user(session, message.from_user, private=False)
+            await session.execute(select(func.pg_advisory_xact_lock(message.chat.id)))
             now = datetime.now(timezone.utc)
             school = await session.scalar(
-                select(School).where(
+                select(School)
+                .where(
                     School.group_link_token_hash == hash_code(payload),
                     School.group_link_token_expires_at > now,
                     School.is_active.is_(True),
                 )
+                .with_for_update()
             )
             if school is None:
                 await message.answer(
@@ -271,6 +374,12 @@ async def connect_school_group(message: Message, bot: Bot):
                 await message.answer("فقط مدیر همین مدرسه یا مدیر کل می‌تواند گروه مدرسه را متصل کند.")
                 return
 
+            class_binding = await session.scalar(
+                select(ClassGroup.id).where(ClassGroup.group_chat_id == message.chat.id)
+            )
+            if class_binding is not None:
+                await message.answer("این گروه قبلاً به یک کلاس متصل شده است؛ برای مدرسه یک گروه جدا بساز.")
+                return
             already_used = await session.scalar(
                 select(School.id).where(
                     School.telegram_group_id == message.chat.id,
@@ -293,7 +402,7 @@ async def connect_school_group(message: Message, bot: Bot):
 
     confirmation = (
         f"✅ گروه «{escape(message.chat.title or 'گروه مدرسه')}» به مدرسه "
-        f"«{escape(school_name)}» متصل شد.\\n"
+        f"«{escape(school_name)}» متصل شد.\n"
         "از این پس این گروه، گروه اصلی اطلاع‌رسانی آن مدرسه خواهد بود."
     )
     await message.answer(confirmation)
@@ -315,6 +424,8 @@ async def start(message: Message, state: FSMContext, bot: Bot):
         except Exception:
             pass
     await state.clear()
+    if message.chat.type == "private":
+        await state.update_data(reply_keyboard_visible=True)
     async with SessionFactory() as session:
         async with session.begin():
             user = await _user(session, message.from_user, private=message.chat.type == "private")
@@ -323,14 +434,47 @@ async def start(message: Message, state: FSMContext, bot: Bot):
                 if message.chat.type == "private"
                 else None
             )
+            group_context = (
+                await get_group_context(session, message.chat.id)
+                if message.chat.type in {"group", "supergroup"}
+                else None
+            )
+            group_can_review = bool(
+                group_context and await can_approve(session, user, group_context[0].id)
+            )
+            school_group_name = None
+            if message.chat.type in {"group", "supergroup"} and group_context is None:
+                school_group_name = await session.scalar(
+                    select(School.name).where(
+                        School.telegram_group_id == message.chat.id,
+                        School.is_active.is_(True),
+                    )
+                )
             platform_admin = user.is_platform_admin
-    greeting = f"سلام {escape(message.from_user.first_name or '')} 👋\\n"
+
+    if group_context:
+        class_group, _, school = group_context
+        await message.answer(
+            f"🏫 <b>{escape(class_group.name)}</b> — {escape(school.name)}\n"
+            "منوی این کلاس:",
+            reply_markup=group_menu_keyboard(can_review=group_can_review),
+        )
+        return
+    if school_group_name:
+        await message.answer(
+            f"🏫 <b>گروه مرکزی مدرسه {escape(school_group_name)}</b>\n"
+            "این گروه برای اطلاع‌رسانی مدرسه متصل است. برای ثبت و مشاهده اطلاعات درسی، "
+            "از گروه اختصاصی هر کلاس استفاده کن."
+        )
+        return
+
+    greeting = f"سلام {escape(message.from_user.first_name or '')} 👋\n"
     greeting += (
-        "به ClassMate خوش آمدی. تمام بخش‌ها را با دکمه‌های پایین صفحه باز کن.\\n"
+        "به ClassMate خوش آمدی. تمام بخش‌ها را با دکمه‌های پایین صفحه باز کن.\n"
         "اطلاعات ثبت‌شده تا پیش از تأیید افراد مورد اعتماد، در فهرست قطعی کلاس نمایش داده نمی‌شوند."
     )
     if platform_admin:
-        greeting += "\\n\\n🛡 پنل مدیر کل برای این حساب فعال است."
+        greeting += "\n\n🛡 پنل مدیر کل برای این حساب فعال است."
     await message.answer(greeting, reply_markup=keyboard)
 
 
@@ -351,6 +495,89 @@ async def help_command(message: Message):
         "برای بازگشت از هر پنل، دکمه «بازگشت» همان پنل را بزن.",
         reply_markup=keyboard,
     )
+
+
+@router.callback_query(F.data.startswith("group:"))
+async def group_menu_action(callback: CallbackQuery, bot: Bot):
+    if callback.message.chat.type not in {"group", "supergroup"}:
+        await callback.answer("این منو فقط در گروه کلاس فعال است.", show_alert=True)
+        return
+
+    action = callback.data.split(":", 1)[1]
+    pending = []
+    class_name = ""
+    answer = ""
+    async with SessionFactory() as session:
+        async with session.begin():
+            user = await _user(session, callback.from_user, private=False)
+            context = await get_group_context(session, callback.message.chat.id)
+            if not context:
+                await callback.answer("این گروه به یک کلاس فعال متصل نیست.", show_alert=True)
+                return
+            class_group, _, school = context
+            class_name = class_group.name
+
+            if action == "pending":
+                if not await can_approve(session, user, class_group.id):
+                    await callback.answer("مجوز مشاهده صف بررسی را نداری.", show_alert=True)
+                    return
+                pending = await list_pending_records(session, class_group.id)
+            elif action == "homework":
+                answer = _format_homework(await list_homework(session, class_group.id))
+            elif action == "exams":
+                answer = _format_exams(
+                    await list_exams(session, class_group.id), school.timezone
+                )
+            elif action == "week":
+                local_date = datetime.now(ZoneInfo(school.timezone)).date()
+                entries = await list_current_timetable(
+                    session, class_group.id, local_date
+                )
+                if not entries:
+                    answer = "برنامه هفتگی هنوز برای این کلاس ثبت نشده است."
+                else:
+                    rows = [
+                        f"{WEEKDAYS[entry.weekday]} — زنگ {entry.period}"
+                        + (f" ({entry.starts_at.strftime('%H:%M')})" if entry.starts_at else "")
+                        + f": {escape(subject.name)}"
+                        for entry, subject in entries
+                    ]
+                    answer = "📅 <b>برنامه هفتگی</b>\n" + "\n".join(rows)
+            elif action == "today":
+                zone = ZoneInfo(school.timezone)
+                local_date = datetime.now(zone).date()
+                reports, homework_rows, exam_rows = await list_daily_summary(
+                    session, class_group.id, local_date, school.timezone
+                )
+                answer = _format_daily_summary(
+                    reports, homework_rows, exam_rows, local_date, school.timezone
+                )
+            else:
+                await callback.answer("این گزینه شناخته‌شده نیست.", show_alert=True)
+                return
+
+    if action == "pending":
+        if not pending:
+            await callback.message.answer("🕓 موردی در انتظار بررسی نیست.")
+        else:
+            for kind, record in pending[:8]:
+                title = getattr(record, "title", "گزارش روزانه")
+                details = getattr(
+                    record, "description",
+                    getattr(record, "body", getattr(record, "scope", "")),
+                )
+                await callback.message.answer(
+                    f"🕓 <b>{escape(kind)} #{record.id} — {escape(title)}</b>\n"
+                    f"{escape(details[:1200])}",
+                    reply_markup=approval_keyboard(kind, record.id),
+                )
+            if len(pending) > 8:
+                await callback.message.answer("فقط ۸ مورد نخست صف بررسی نمایش داده شد.")
+    else:
+        await callback.message.answer(
+            f"🏫 <b>{escape(class_name)}</b>\n\n{answer}"
+        )
+    await callback.answer()
 
 
 @router.callback_query(F.data == "menu:home")
@@ -386,17 +613,124 @@ async def menu_classes(callback: CallbackQuery):
     await callback.answer()
 
 
-@router.callback_query(F.data.in_({"menu:homework", "menu:exams", "menu:week", "menu:search", "menu:reminders"}))
+@router.callback_query(F.data.in_({"menu:homework", "menu:exams", "menu:week", "menu:search"}))
 async def menu_shortcuts(callback: CallbackQuery):
     messages = {
         "menu:homework": "برای مشاهده تکالیف در خصوصی از /homework شناسه_کلاس و در گروه از /homework استفاده کن.",
         "menu:exams": "برای مشاهده امتحانات از /exams شناسه_کلاس یا فرمان /exams در گروه استفاده کن.",
         "menu:week": "برای مشاهده برنامه هفتگی از /week شناسه_کلاس یا /week در گروه استفاده کن.",
         "menu:search": "جست‌وجوی نسخه اول مبتنی بر کلیدواژه است. از /ask نام درس یا عبارت موردنظر استفاده کن.",
-        "menu:reminders": "یادآوری‌های خصوصی فقط برای کاربرانی ارسال می‌شود که ربات را در خصوصی Start کرده باشند. تنظیمات پیش‌فرض کلاس فعال است.",
     }
     await callback.message.answer(messages[callback.data])
     await callback.answer()
+
+
+async def _show_reminder_class_selector(callback: CallbackQuery) -> None:
+    if callback.message.chat.type != "private":
+        await callback.answer("تنظیم یادآوری خصوصی فقط در گفت‌وگوی خصوصی در دسترس است.", show_alert=True)
+        return
+    async with SessionFactory() as session:
+        async with session.begin():
+            user = await _user(session, callback.from_user, private=True)
+            classes = await _classes_for_user(session, user)
+    text = (
+        "برای تنظیم یادآوری ابتدا عضو یک کلاس شو."
+        if not classes
+        else "🔔 <b>تنظیم یادآوری خصوصی</b>\nکلاس موردنظر را انتخاب کن:"
+    )
+    markup = reminder_class_picker(classes) if classes else None
+    try:
+        await callback.message.edit_text(text, reply_markup=markup)
+    except TelegramBadRequest:
+        await callback.message.answer(text, reply_markup=markup)
+    await callback.answer()
+
+
+async def _show_reminder_preferences(callback: CallbackQuery, class_id: int) -> None:
+    if callback.message.chat.type != "private":
+        await callback.answer("این تنظیم فقط در گفت‌وگوی خصوصی قابل تغییر است.", show_alert=True)
+        return
+    async with SessionFactory() as session:
+        async with session.begin():
+            user = await _user(session, callback.from_user, private=True)
+            if not await user_can_access_class(session, user, class_id):
+                await callback.answer("به این کلاس دسترسی نداری.", show_alert=True)
+                return
+            context = await get_class_with_school(session, class_id)
+            preference = await session.scalar(
+                select(NotificationPreference).where(
+                    NotificationPreference.user_id == user.id,
+                    NotificationPreference.class_id == class_id,
+                )
+            )
+            homework_enabled = preference.homework_enabled if preference else True
+            exams_enabled = preference.exams_enabled if preference else True
+    class_name = context[0].name if context else "کلاس"
+    await callback.message.edit_text(
+        f"🔔 <b>تنظیم یادآوری — {escape(class_name)}</b>\n"
+        "این تنظیم فقط روی پیام‌های خصوصی اثر دارد؛ اعلان گروهی کلاس جداگانه ارسال می‌شود.",
+        reply_markup=reminder_preferences_keyboard(
+            class_id,
+            homework_enabled=homework_enabled,
+            exams_enabled=exams_enabled,
+        ),
+    )
+    await callback.answer()
+
+
+@router.callback_query(F.data == "menu:reminders")
+async def menu_reminders(callback: CallbackQuery):
+    await _show_reminder_class_selector(callback)
+
+
+@router.callback_query(F.data == "reminders:list")
+async def reminder_class_list(callback: CallbackQuery):
+    await _show_reminder_class_selector(callback)
+
+
+@router.callback_query(F.data.startswith("reminders:class:"))
+async def reminder_class_selected(callback: CallbackQuery):
+    try:
+        class_id = int(callback.data.rsplit(":", 1)[1])
+        if class_id < 1:
+            raise ValueError
+    except (TypeError, ValueError):
+        await callback.answer("شناسه کلاس نامعتبر است.", show_alert=True)
+        return
+    await _show_reminder_preferences(callback, class_id)
+
+
+@router.callback_query(F.data.startswith("reminders:set:"))
+async def reminder_preference_set(callback: CallbackQuery):
+    try:
+        _, _, category, class_id_raw, enabled_raw = callback.data.split(":")
+        class_id = int(class_id_raw)
+        if category not in {"homework", "exams"} or class_id < 1 or enabled_raw not in {"0", "1"}:
+            raise ValueError
+        enabled = enabled_raw == "1"
+    except (TypeError, ValueError):
+        await callback.answer("درخواست تنظیم یادآوری نامعتبر است.", show_alert=True)
+        return
+    if callback.message.chat.type != "private":
+        await callback.answer("تنظیم یادآوری فقط در خصوصی قابل تغییر است.", show_alert=True)
+        return
+
+    async with SessionFactory() as session:
+        async with session.begin():
+            user = await _user(session, callback.from_user, private=True)
+            if not await user_can_access_class(session, user, class_id):
+                await callback.answer("به این کلاس دسترسی نداری.", show_alert=True)
+                return
+            context = await get_class_with_school(session, class_id)
+            if not context:
+                await callback.answer("کلاس فعال پیدا نشد.", show_alert=True)
+                return
+            class_group, _, school = context
+            await update_user_reminder_preference(
+                session, user, class_group, school.timezone, category, enabled
+            )
+
+    await _show_reminder_preferences(callback, class_id)
 
 
 @router.message(Command("school_new"))
@@ -658,25 +992,41 @@ async def connect_group(message: Message, bot: Bot):
         await message.answer("قالب: /connect کد_اتصال")
         return
     try:
+        bot_profile = await bot.get_me()
+        bot_member = await bot.get_chat_member(message.chat.id, bot_profile.id)
+        if bot_member.status not in {"administrator", "creator"}:
+            await message.answer(
+                "برای اتصال کلاس، ابتدا ربات را در این گروه مدیر کن و دوباره تلاش کن."
+            )
+            return
         member = await bot.get_chat_member(message.chat.id, message.from_user.id)
         if member.status not in {"administrator", "creator"}:
             await message.answer("فقط مدیر گروه می‌تواند اتصال را انجام دهد.")
             return
     except Exception:
-        await message.answer("امکان بررسی دسترسی مدیر گروه وجود ندارد. دوباره تلاش کن.")
+        await message.answer("امکان بررسی دسترسی مدیر گروه وجود ندارد. مطمئن شو ربات مدیر گروه است.")
         return
     async with SessionFactory() as session:
         async with session.begin():
             await _user(session, message.from_user)
+            await session.execute(select(func.pg_advisory_xact_lock(message.chat.id)))
             class_group = await session.scalar(
-                select(ClassGroup).where(
+                select(ClassGroup)
+                .where(
                     ClassGroup.group_link_code_hash == hash_code(code),
                     ClassGroup.group_link_code_expires_at > datetime.now(timezone.utc),
                     ClassGroup.is_active.is_(True),
                 )
+                .with_for_update()
             )
             if class_group is None:
                 await message.answer("کد اتصال نامعتبر یا قبلاً مصرف شده است.")
+                return
+            school_binding = await session.scalar(
+                select(School.id).where(School.telegram_group_id == message.chat.id)
+            )
+            if school_binding is not None:
+                await message.answer("این گروه به‌عنوان گروه مرکزی یک مدرسه متصل است؛ برای کلاس یک گروه جدا بساز.")
                 return
             occupied = await session.scalar(
                 select(ClassGroup.id).where(
@@ -1251,6 +1601,9 @@ async def approval_callback(callback: CallbackQuery, bot: Bot):
             if not await can_approve(session, user, class_group.id):
                 await callback.answer("فقط افراد مورد اعتماد می‌توانند تأیید کنند.", show_alert=True)
                 return
+            submitter_telegram_id = await get_record_submitter_telegram_id(
+                session, entity_type, entity_id, class_group.id
+            )
             if action == "approve":
                 success, result_text = await approve_record(
                     session, entity_type, entity_id, user.id, school.id,
@@ -1267,17 +1620,50 @@ async def approval_callback(callback: CallbackQuery, bot: Bot):
             await callback.message.edit_reply_markup(reply_markup=None)
         except Exception:
             pass
-        if action == "approve":
-            await bot.send_message(
-                class_group.group_chat_id,
-                f"✅ <b>اطلاعات تأیید شد</b>\nنوع: {entity_type}\nشناسه: {entity_id}\n"
-                "این مورد اکنون در جست‌وجو و فهرست اطلاعات کلاس قابل مشاهده است."
-            )
-        else:
-            await bot.send_message(
-                class_group.group_chat_id,
-                f"❌ درخواست {entity_type} با شناسه {entity_id} رد شد."
-            )
+
+        entity_labels = {
+            "homework": "تکلیف",
+            "exam": "امتحان",
+            "report": "گزارش روزانه",
+        }
+        entity_label = entity_labels[entity_type]
+        if class_group.group_chat_id:
+            try:
+                if action == "approve":
+                    await bot.send_message(
+                        class_group.group_chat_id,
+                        f"✅ <b>{entity_label} تأیید شد</b>\n"
+                        "این مورد اکنون در فهرست اطلاعات قطعی کلاس قابل مشاهده است."
+                    )
+                else:
+                    await bot.send_message(
+                        class_group.group_chat_id,
+                        f"❌ {entity_label} ثبت‌شده رد شد."
+                    )
+            except Exception:
+                logger.exception(
+                    "Failed to notify group %s after review of %s #%s",
+                    class_group.group_chat_id, entity_type, entity_id,
+                )
+        if submitter_telegram_id is not None:
+            try:
+                if action == "approve":
+                    submitter_message = (
+                        f"✅ {entity_label} ثبت‌شدهٔ تو تأیید شد. "
+                        "اکنون در اطلاعات قطعی کلاس نمایش داده می‌شود."
+                    )
+                else:
+                    submitter_message = (
+                        f"❌ {entity_label} ثبت‌شدهٔ تو رد شد. "
+                        "برای جزئیات بیشتر با مدیر کلاس تماس بگیر."
+                    )
+                await bot.send_message(submitter_telegram_id, submitter_message)
+            except Exception:
+                logger.info(
+                    "Could not privately notify submitter %s about %s #%s",
+                    submitter_telegram_id, entity_type, entity_id,
+                    exc_info=True,
+                )
 
 
 @router.message(Command("pending"))
@@ -1377,16 +1763,14 @@ async def today_command(message: Message):
                 return
             class_group, _, school = context
             today = datetime.now(ZoneInfo(school.timezone)).date()
-            reports = await list_reports(session, class_group.id, today)
-    if not reports:
-        await message.answer("برای امروز گزارش تأییدشده‌ای ثبت نشده است.")
-    else:
-        for report in reports:
-            await message.answer(
-                f"🗒 <b>{escape(report.title or 'گزارش روزانه')}</b>\n"
-                f"{jalali_date(report.report_date)}\n{escape(report.body)}"
+            reports, homework_rows, exam_rows = await list_daily_summary(
+                session, class_group.id, today, school.timezone
             )
-
+    await message.answer(
+        _format_daily_summary(
+            reports, homework_rows, exam_rows, today, school.timezone
+        )
+    )
 
 
 @router.message(Command("timetable_set"))
@@ -1492,17 +1876,9 @@ async def week_command(message: Message):
             if not context:
                 await message.answer("کلاس مشخص نیست.")
                 return
-            class_group = context[0]
-            entries = list(
-                (
-                    await session.execute(
-                        select(TimetableEntry, Subject)
-                        .join(Subject, TimetableEntry.subject_id == Subject.id)
-                        .where(TimetableEntry.class_id == class_group.id)
-                        .order_by(TimetableEntry.weekday, TimetableEntry.period)
-                    )
-                ).all()
-            )
+            class_group, _, school = context
+            today = datetime.now(ZoneInfo(school.timezone)).date()
+            entries = await list_current_timetable(session, class_group.id, today)
     if not entries:
         await message.answer("برنامه هفتگی هنوز برای این کلاس ثبت نشده است.")
         return
@@ -1628,8 +2004,8 @@ async def reminder_preferences(message: Message):
     parts = message.text.split()
     if len(parts) < 2 or not parts[1].isdigit():
         await message.answer(
-            "قالب: /reminders_on شناسه_کلاس [homework|exams|all]\n"
-            "برای خاموش‌کردن از /reminders_off استفاده کن."
+            "این فرمان برای سازگاری قبلی است. از دکمه «🔔 یادآوری» استفاده کن تا کلاس را از فهرست انتخاب کنی.\n"
+            "قالب قدیمی: /reminders_on شناسه_کلاس [homework|exams|all]"
         )
         return
     class_id = int(parts[1])
@@ -1645,18 +2021,16 @@ async def reminder_preferences(message: Message):
             if not context:
                 await message.answer("به این کلاس دسترسی نداری.")
                 return
-            preference = await session.scalar(
-                select(NotificationPreference).where(
-                    NotificationPreference.user_id == user.id,
-                    NotificationPreference.class_id == class_id,
-                )
-            )
-            if preference is None:
-                preference = NotificationPreference(user_id=user.id, class_id=class_id)
-                session.add(preference)
+            class_group, _, school = context
             if category in {"homework", "all"}:
-                preference.homework_enabled = enabled
+                await update_user_reminder_preference(
+                    session, user, class_group, school.timezone, "homework", enabled
+                )
             if category in {"exams", "all"}:
-                preference.exams_enabled = enabled
+                await update_user_reminder_preference(
+                    session, user, class_group, school.timezone, "exams", enabled
+                )
     state_label = "فعال" if enabled else "غیرفعال"
-    await message.answer(f"✅ یادآوری‌های انتخاب‌شده برای این کلاس {state_label} شدند.")
+    await message.answer(
+        f"✅ یادآوری‌های انتخاب‌شده برای «{escape(class_group.name)}» {state_label} شدند."
+    )

@@ -1,8 +1,9 @@
-from datetime import datetime, time, timedelta
+from datetime import datetime, time, timedelta, timezone
 from html import escape
 from zoneinfo import ZoneInfo
 
 from sqlalchemy import or_, select
+from sqlalchemy.dialects.postgresql import insert as pg_insert
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from classmate.db.models import (
@@ -17,14 +18,107 @@ from classmate.db.models import (
 )
 
 
+async def update_user_reminder_preference(
+    session: AsyncSession,
+    user: User,
+    class_group: ClassGroup,
+    school_timezone: str,
+    category: str,
+    enabled: bool,
+) -> tuple[int, int]:
+    """Persist one category preference and reconcile this user's queued reminders."""
+    if category not in {"homework", "exams"}:
+        raise ValueError("Unsupported reminder category")
+
+    values = {
+        "user_id": user.id,
+        "class_id": class_group.id,
+        "homework_enabled": enabled if category == "homework" else True,
+        "exams_enabled": enabled if category == "exams" else True,
+    }
+    update_values = {
+        "homework_enabled" if category == "homework" else "exams_enabled": enabled
+    }
+    statement = pg_insert(NotificationPreference).values(**values)
+    await session.execute(
+        statement.on_conflict_do_update(
+            constraint="uq_notification_user_class",
+            set_=update_values,
+        )
+    )
+
+    if not enabled:
+        entity_types = ["homework"] if category == "homework" else ["exam"]
+        jobs = (
+            await session.execute(
+                select(ReminderJob)
+                .where(
+                    ReminderJob.class_id == class_group.id,
+                    ReminderJob.target_type == "private",
+                    ReminderJob.target_id == user.telegram_id,
+                    ReminderJob.entity_type.in_(entity_types),
+                    ReminderJob.status.in_(["pending", "retry", "processing"]),
+                )
+                .with_for_update()
+            )
+        ).scalars().all()
+        cancelled = 0
+        for job in jobs:
+            job.status = "cancelled"
+            job.locked_at = None
+            cancelled += 1
+        return 0, cancelled
+
+    now_utc = datetime.now(timezone.utc)
+    if category == "homework":
+        upcoming = (
+            await session.scalars(
+                select(Homework).where(
+                    Homework.class_id == class_group.id,
+                    Homework.status == "APPROVED",
+                    Homework.due_on >= datetime.now(ZoneInfo(school_timezone)).date(),
+                )
+            )
+        ).all()
+        entity_type = "homework"
+    else:
+        upcoming = (
+            await session.scalars(
+                select(Exam).where(
+                    Exam.class_id == class_group.id,
+                    Exam.status == "APPROVED",
+                    Exam.scheduled_at >= now_utc,
+                )
+            )
+        ).all()
+        entity_type = "exam"
+
+    created = 0
+    for record in upcoming:
+        created += await schedule_approved_record_reminders(
+            session,
+            class_group,
+            record,
+            entity_type,
+            school_timezone,
+            target_user_id=user.id,
+            include_group=False,
+        )
+    return created, 0
+
+
 async def schedule_approved_record_reminders(
     session: AsyncSession,
     class_group: ClassGroup,
     entity: Homework | Exam,
     entity_type: str,
     school_timezone: str,
+    *,
+    target_user_id: int | None = None,
+    include_group: bool = True,
 ) -> int:
     """Persist group and opted-in private reminders for an approved record."""
+
     zone = ZoneInfo(school_timezone)
     now = datetime.now(zone)
     if entity_type == "exam":
@@ -52,7 +146,7 @@ async def schedule_approved_record_reminders(
         return 0
 
     targets: list[tuple[str, int]] = []
-    if class_group.group_chat_id is not None:
+    if include_group and class_group.group_chat_id is not None:
         targets.append(("group", class_group.group_chat_id))
     preferences = (
         await session.execute(
@@ -68,6 +162,7 @@ async def schedule_approved_record_reminders(
                 ClassMembership.is_active.is_(True),
                 User.private_chat_started.is_(True),
                 User.is_active.is_(True),
+                *([User.id == target_user_id] if target_user_id is not None else []),
                 or_(
                     NotificationPreference.exams_enabled.is_(True)
                     if entity_type == "exam"
@@ -86,10 +181,19 @@ async def schedule_approved_record_reminders(
                 f"{entity_type}:{entity.id}:{target_type}:{target_id}:"
                 f"{scheduled_at.isoformat()}"
             )
-            exists = await session.scalar(
-                select(ReminderJob.id).where(ReminderJob.dedupe_key == dedupe)
+            existing = await session.scalar(
+                select(ReminderJob)
+                .where(ReminderJob.dedupe_key == dedupe)
+                .with_for_update()
             )
-            if exists:
+            if existing is not None:
+                if existing.status == "cancelled":
+                    existing.status = "pending"
+                    existing.scheduled_at = scheduled_at
+                    existing.attempts = 0
+                    existing.last_error = None
+                    existing.locked_at = None
+                    created += 1
                 continue
             subject = await session.get(Subject, entity.subject_id)
             message = (
@@ -97,17 +201,21 @@ async def schedule_approved_record_reminders(
                 f"درس: {escape(subject.name) if subject else 'نامشخص'}\n"
                 f"{label}: {escape(entity.title)}"
             )
-            session.add(
-                ReminderJob(
-                    class_id=class_group.id,
-                    entity_type=entity_type,
-                    entity_id=entity.id,
-                    target_type=target_type,
-                    target_id=target_id,
-                    message_text=message,
-                    scheduled_at=scheduled_at,
-                    dedupe_key=dedupe,
-                )
+            statement = pg_insert(ReminderJob).values(
+                class_id=class_group.id,
+                entity_type=entity_type,
+                entity_id=entity.id,
+                target_type=target_type,
+                target_id=target_id,
+                message_text=message,
+                scheduled_at=scheduled_at,
+                dedupe_key=dedupe,
             )
-            created += 1
+            inserted_id = await session.scalar(
+                statement.on_conflict_do_nothing(
+                    constraint="uq_reminder_dedupe_key"
+                ).returning(ReminderJob.id)
+            )
+            if inserted_id is not None:
+                created += 1
     return created

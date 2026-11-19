@@ -21,22 +21,26 @@ from classmate.bot.handlers import (
     WEEKDAYS,
     _classes_for_user,
     _ensure_group_member,
+    _format_daily_summary,
     _format_exams,
     _format_homework,
     _parse_pipe_args,
     _user,
+    update_user_reminder_preference,
 )
-from classmate.bot.keyboards import main_reply_keyboard
+from classmate.bot.keyboards import main_reply_keyboard, reminder_preferences_keyboard
 from classmate.bot.states import PanelInput
 from classmate.core.config import get_settings
 from classmate.db.models import (
     AcademicYear,
     ClassGroup,
     ClassMembership,
+    Exam,
+    Homework,
     NotificationPreference,
+    Subject,
     School,
     SchoolMembership,
-    Subject,
     TimetableEntry,
     User,
 )
@@ -53,6 +57,7 @@ from classmate.services.permissions import (
 from classmate.services.records import (
     add_subject,
     approve_record,
+    cancel_approved_record,
     audit,
     get_or_create_next_lesson,
     get_subject,
@@ -60,7 +65,9 @@ from classmate.services.records import (
     list_homework,
     list_homework_for_lesson,
     list_pending_records,
-    list_reports,
+    list_daily_summary,
+    list_current_timetable,
+    get_record_submitter_telegram_id,
     normalize_subject_name,
     reject_record,
 )
@@ -110,6 +117,14 @@ def _button(text: str, data: str) -> InlineKeyboardButton:
     return InlineKeyboardButton(text=text, callback_data=data)
 
 
+def _should_create_panel_message(
+    panel_message_id: int | None,
+    reply_keyboard_visible: bool,
+) -> bool:
+    """A visible reply keyboard must be removed on a fresh message, not an edit."""
+    return panel_message_id is None or reply_keyboard_visible
+
+
 async def _render_from_message(
     message: Message,
     state: FSMContext,
@@ -120,7 +135,9 @@ async def _render_from_message(
     """Edit the existing panel message; create one only when no panel exists."""
     data = await state.get_data()
     panel_id = data.get("panel_message_id")
-    if panel_id:
+    keyboard_visible = data.get("reply_keyboard_visible", False)
+    create_new_panel = _should_create_panel_message(panel_id, keyboard_visible)
+    if panel_id and not create_new_panel:
         try:
             await bot.edit_message_text(
                 text=text,
@@ -133,6 +150,11 @@ async def _render_from_message(
             if "message is not modified" in str(exc).lower():
                 return
             logger.info("Could not edit previous panel message: %s", exc)
+    if panel_id and create_new_panel:
+        try:
+            await bot.delete_message(message.chat.id, panel_id)
+        except TelegramBadRequest:
+            pass
     sent = await bot.send_message(
         message.chat.id,
         text,
@@ -144,7 +166,10 @@ async def _render_from_message(
             message_id=sent.message_id,
             reply_markup=keyboard,
         )
-    await state.update_data(panel_message_id=sent.message_id)
+    await state.update_data(
+        panel_message_id=sent.message_id,
+        reply_keyboard_visible=False,
+    )
 
 
 async def _render_from_callback(
@@ -155,11 +180,17 @@ async def _render_from_callback(
 ) -> None:
     try:
         await callback.message.edit_text(text, reply_markup=keyboard)
-        await state.update_data(panel_message_id=callback.message.message_id)
+        await state.update_data(
+            panel_message_id=callback.message.message_id,
+            reply_keyboard_visible=False,
+        )
     except TelegramBadRequest as exc:
         if "message is not modified" not in str(exc).lower():
             sent = await callback.message.answer(text, reply_markup=keyboard)
-            await state.update_data(panel_message_id=sent.message_id)
+            await state.update_data(
+                panel_message_id=sent.message_id,
+                reply_keyboard_visible=False,
+            )
     await callback.answer()
 
 
@@ -175,6 +206,7 @@ async def _close_panel(
         except TelegramBadRequest:
             pass
     await state.clear()
+    await state.update_data(reply_keyboard_visible=True)
     _, roles = await _current_user(callback)
     await callback.bot.send_message(
         callback.message.chat.id,
@@ -413,28 +445,17 @@ async def _show_action(
         async with SessionFactory() as session:
             async with session.begin():
                 today = datetime.now(ZoneInfo(school.timezone)).date()
-                reports = await list_reports(session, class_id, today)
-        if not reports:
-            body = "برای امروز گزارش تأییدشده‌ای ثبت نشده است."
-        else:
-            body = "\n\n".join(
-                f"🗒 <b>{escape(report.title or 'گزارش روزانه')}</b>\n"
-                f"{jalali_date(report.report_date)}\n{escape(report.body)}"
-                for report in reports
-            )
+                reports, homework_rows, exam_rows = await list_daily_summary(
+                    session, class_id, today, school.timezone
+                )
+        body = _format_daily_summary(
+            reports, homework_rows, exam_rows, today, school.timezone
+        )
     elif action == "week":
         async with SessionFactory() as session:
             async with session.begin():
-                entries = list(
-                    (
-                        await session.execute(
-                            select(TimetableEntry, Subject)
-                            .join(Subject, TimetableEntry.subject_id == Subject.id)
-                            .where(TimetableEntry.class_id == class_id)
-                            .order_by(TimetableEntry.weekday, TimetableEntry.period)
-                        )
-                    ).all()
-                )
+                today = datetime.now(ZoneInfo(school.timezone)).date()
+                entries = await list_current_timetable(session, class_id, today)
         body = (
             "برنامه هفتگی هنوز برای این کلاس ثبت نشده است."
             if not entries
@@ -458,27 +479,16 @@ async def _show_action(
                 )
         homework_enabled = pref.homework_enabled if pref else True
         exams_enabled = pref.exams_enabled if pref else True
-        body = (
-            f"🔔 <b>تنظیم یادآوری‌های خصوصی</b>\n"
-            f"تکالیف: {'فعال ✅' if homework_enabled else 'غیرفعال ⛔'}\n"
-            f"امتحانات: {'فعال ✅' if exams_enabled else 'غیرفعال ⛔'}"
-        )
-        rows = [
-            [
-                _button(
-                    "خاموش‌کردن تکالیف" if homework_enabled else "فعال‌کردن تکالیف",
-                    f"ui:reminder_toggle:{class_id}:homework:{'off' if homework_enabled else 'on'}",
-                )
-            ],
-            [
-                _button(
-                    "خاموش‌کردن امتحانات" if exams_enabled else "فعال‌کردن امتحانات",
-                    f"ui:reminder_toggle:{class_id}:exams:{'off' if exams_enabled else 'on'}",
-                )
-            ],
-        ]
         await _render_from_message(
-            message, state, bot, f"{title}\n\n{body}", _markup(rows, f"ui:class:{class_id}")
+            message,
+            state,
+            bot,
+            f"{title}\n\n🔔 <b>تنظیم یادآوری‌های خصوصی</b>",
+            reminder_preferences_keyboard(
+                class_id,
+                homework_enabled=homework_enabled,
+                exams_enabled=exams_enabled,
+            ),
         )
         return
     elif action == "pending":
@@ -561,6 +571,7 @@ async def _show_management_from_message(
         [_button("👤 افزودن فرد مورد اعتماد", f"ui:form:approver_add:{class_id}")],
         [_button("📘 افزودن درس", f"ui:form:subject_add:{class_id}")],
         [_button("🗓 تنظیم زنگ برنامه", f"ui:form:timetable_set:{class_id}")],
+        [_button("🚫 لغو تکلیف یا امتحان", f"ui:cancel_records:{class_id}")],
     ]
     await _render_from_message(
         message,
@@ -582,8 +593,8 @@ async def _show_platform_panel(
         return
     rows = [
         [_button("🏫 ایجاد مدرسه و سال تحصیلی", "ui:form:school_new")],
-        [_button("👤 تعیین مدیر مدرسه", "ui:form:school_admin_add")],
-        [_button("📚 مدیریت مدرسه‌ها و کلاس‌ها", "ui:classes")],
+        [_button("👤 تعیین مدیر مدرسه", "ui:school_admin_schools")],
+        [_button("📚 مدیریت مدرسه‌ها و کلاس‌ها", "ui:school")],
     ]
     await _render_from_callback(
         callback,
@@ -595,22 +606,90 @@ async def _show_platform_panel(
     )
 
 
+async def _admin_schools(tg_user) -> list[tuple[int, str]]:
+    """Return only active schools the current account is allowed to administer."""
+    async with SessionFactory() as session:
+        async with session.begin():
+            user = await _user(session, tg_user, private=True)
+            query = select(School).where(School.is_active.is_(True))
+            if not user.is_platform_admin:
+                query = query.join(
+                    SchoolMembership,
+                    SchoolMembership.school_id == School.id,
+                ).where(
+                    SchoolMembership.user_id == user.id,
+                    SchoolMembership.role == "school_admin",
+                    SchoolMembership.is_active.is_(True),
+                )
+            schools = (await session.scalars(query.order_by(School.name))).all()
+            return [(school.id, school.name) for school in schools]
+
+
 async def _show_school_panel(callback: CallbackQuery, state: FSMContext) -> None:
     _, roles = await _current_user(callback)
     if not roles["school"]:
         await callback.answer("این بخش فقط برای مدیر مدرسه است.", show_alert=True)
         return
+    schools = await _admin_schools(callback.from_user)
     rows = [
-        [_button("📅 ایجاد سال تحصیلی", "ui:form:year_new")],
-        [_button("🏫 ایجاد کلاس", "ui:form:class_new")],
-        [_button("👤 تعیین مدیر کلاس", "ui:form:class_manager_add")],
-        [_button("📚 مشاهده کلاس‌های مدرسه", "ui:classes")],
+        [_button(f"🏫 {name[:42]}", f"ui:school_manage:{school_id}")]
+        for school_id, name in schools
+    ]
+    body = (
+        "🏢 <b>مدیریت مدرسه</b>\nمدرسه‌ای را برای مدیریت انتخاب کن."
+        if schools
+        else "برای این حساب مدرسه فعالی جهت مدیریت ثبت نشده است."
+    )
+    await _render_from_callback(callback, state, body, _markup(rows, "ui:close"))
+
+
+async def _show_school_management(
+    callback: CallbackQuery,
+    state: FSMContext,
+    school_id: int,
+) -> None:
+    async with SessionFactory() as session:
+        async with session.begin():
+            user = await _user(session, callback.from_user, private=True)
+            school = await session.get(School, school_id)
+            if not school or not school.is_active or not await is_school_admin(session, user, school_id):
+                await callback.answer("به مدیریت این مدرسه دسترسی نداری.", show_alert=True)
+                return
+            school_name = school.name
+            group_id = school.telegram_group_id
+            group_title = school.telegram_group_title
+            link_expires_at = school.group_link_token_expires_at
+    link_is_pending = (
+        link_expires_at is not None
+        and link_expires_at > datetime.now(ZoneInfo("UTC"))
+    )
+    if group_id is not None:
+        group_status = f"🟢 گروه مرکزی متصل: {escape(group_title or str(group_id))}"
+        group_action = _button(
+            "🔄 تغییر گروه مرکزی", f"ui:school_group_reset_confirm:{school_id}"
+        )
+    elif link_is_pending:
+        group_status = "🕓 لینک اتصال صادر شده و تا ۲۴ ساعت معتبر است."
+        group_action = _button(
+            "📨 ارسال لینک تازه", f"ui:school_group_link:{school_id}"
+        )
+    else:
+        group_status = "🔴 گروه مرکزی هنوز متصل نشده است."
+        group_action = _button(
+            "🔗 ساخت لینک اتصال گروه", f"ui:school_group_link:{school_id}"
+        )
+    rows = [
+        [group_action],
+        [_button("📅 ایجاد سال تحصیلی", f"ui:form:year_new:{school_id}")],
+        [_button("🏫 ایجاد کلاس", f"ui:form:class_new:{school_id}")],
+        [_button("👤 تعیین مدیر کلاس", f"ui:school_classes:{school_id}")],
+        [_button("📚 مشاهده کلاس‌های مدرسه", f"ui:school_classes_view:{school_id}")],
     ]
     await _render_from_callback(
         callback,
         state,
-        "🏢 <b>پنل مدیریت مدرسه</b>\nعملیات مربوط به سال تحصیلی، کلاس‌ها و مدیران کلاس.",
-        _markup(rows),
+        f"🏢 <b>{escape(school_name)}</b>\n{group_status}\nعملیات مدیریتی این مدرسه را انتخاب کن.",
+        _markup(rows, "ui:school"),
     )
 
 
@@ -619,15 +698,16 @@ async def _show_form(
     state: FSMContext,
     form_name: str,
     class_id: int | None = None,
+    school_id: int | None = None,
 ) -> None:
     user, roles = await _current_user(callback)
     prompts = {
         "join": "کد دعوت کلاس را وارد کن.",
         "school_new": "نام مدرسه را وارد کن.",
-        "school_admin_add": "شناسه مدرسه | شناسه عددی تلگرام کاربر",
-        "year_new": "شناسه مدرسه | نام سال تحصیلی\nنمونه: 1 | ۱۴۰۶-۱۴۰۷",
-        "class_new": "شناسه مدرسه | پایه | شعبه | نام کلاس\nبرای نداشتن شعبه، - وارد کن.",
-        "class_manager_add": "شناسه کلاس | شناسه عددی تلگرام مدیر جدید",
+        "school_admin_add": "شناسه عددی تلگرام کاربر را وارد کن.",
+        "year_new": "نام سال تحصیلی را وارد کن.\nنمونه: ۱۴۰۶-۱۴۰۷",
+        "class_new": "پایه | شعبه | نام کلاس\nبرای نداشتن شعبه، - وارد کن. نمونه: دهم | الف | دهم تجربی ۱",
+        "class_manager_add": "شناسه عددی تلگرام مدیر جدید را وارد کن.",
         "class_code": "کدهای جدید برای کلاس انتخاب‌شده ساخته می‌شود.",
         "approver_add": "شناسه عددی تلگرام فرد مورد اعتماد را وارد کن.",
         "subject_add": "نام درس را وارد کن.",
@@ -645,6 +725,26 @@ async def _show_form(
         "class_new": roles["school"],
         "class_manager_add": roles["school"],
     }
+    if form_name in {"year_new", "class_new"}:
+        async with SessionFactory() as session:
+            async with session.begin():
+                actor = await _user(session, callback.from_user, private=True)
+                school = await session.get(School, school_id) if school_id else None
+                permitted[form_name] = bool(
+                    school and school.is_active
+                    and await is_school_admin(session, actor, school_id)
+                )
+    if form_name == "school_admin_add":
+        async with SessionFactory() as session:
+            async with session.begin():
+                actor = await _user(session, callback.from_user, private=True)
+                school = await session.get(School, school_id) if school_id else None
+                permitted[form_name] = bool(
+                    actor.is_platform_admin and school and school.is_active
+                )
+    if form_name == "class_manager_add" and class_id is not None:
+        context = await _class_context(class_id, callback.from_user)
+        permitted[form_name] = bool(context and context["is_school_admin"])
     if form_name in {"class_code", "approver_add", "subject_add", "timetable_set"}:
         context = await _class_context(class_id or 0, callback.from_user)
         if not context:
@@ -667,6 +767,7 @@ async def _show_form(
     await state.update_data(
         panel_form=form_name,
         panel_class_id=class_id,
+        panel_school_id=school_id,
         **({"school_name": None} if form_name == "school_new" else {}),
     )
     await _render_from_callback(
@@ -677,13 +778,19 @@ async def _show_form(
     )
 
 
-def _parent_for_form(form_name: str, class_id: int | None) -> str:
+def _parent_for_form(
+    form_name: str,
+    class_id: int | None,
+    school_id: int | None = None,
+) -> str:
     if form_name == "join":
         return "ui:classes"
     if form_name == "search" and class_id is not None:
         return f"ui:class:{class_id}"
     if class_id is not None:
         return f"ui:manage:{class_id}"
+    if form_name in {"year_new", "class_new"} and school_id is not None:
+        return f"ui:school_manage:{school_id}"
     if form_name in {"school_new", "school_admin_add"}:
         return "ui:platform"
     return "ui:school"
@@ -756,12 +863,12 @@ async def main_button_handler(message: Message, state: FSMContext, bot: Bot) -> 
     saved = await state.get_data()
     panel_message_id = saved.get("panel_message_id")
     await state.clear()
-    if panel_message_id is not None:
-        await state.update_data(panel_message_id=panel_message_id)
-    try:
-        await message.delete()
-    except TelegramBadRequest:
-        pass
+    await state.update_data(
+        **({"panel_message_id": panel_message_id} if panel_message_id is not None else {}),
+        reply_keyboard_visible=True,
+    )
+    # Keep the user's tapped reply-keyboard label in chat history.
+    # Deleting it made button taps look like the bot was erasing messages.
     if label == "⬅️ بازگشت":
         if panel_message_id is not None:
             try:
@@ -769,6 +876,7 @@ async def main_button_handler(message: Message, state: FSMContext, bot: Bot) -> 
             except TelegramBadRequest:
                 pass
         await state.clear()
+        await state.update_data(reply_keyboard_visible=True)
         _, roles = await _current_user(message)
         await message.answer(
             "به منوی اصلی برگشتی.",
@@ -783,9 +891,9 @@ async def main_button_handler(message: Message, state: FSMContext, bot: Bot) -> 
     if label == "ℹ️ راهنمای استفاده":
         await _render_from_message(
             message, state, bot,
-            "ℹ️ <b>راهنمای ClassMate</b>\\n"
-            "تمام عملیات از دکمه‌های کیبورد پایین صفحه آغاز می‌شوند.\\n"
-            "برای ورود به کلاس از «عضویت در کلاس» استفاده کن؛ برای ثبت تکلیف، امتحان یا گزارش «ثبت اطلاعات» را بزن.\\n"
+            "ℹ️ <b>راهنمای ClassMate</b>\n"
+            "تمام عملیات از دکمه‌های کیبورد پایین صفحه آغاز می‌شوند.\n"
+            "برای ورود به کلاس از «عضویت در کلاس» استفاده کن؛ برای ثبت تکلیف، امتحان یا گزارش «ثبت اطلاعات» را بزن.\n"
             "هر پنل داخلی دکمه بازگشت دارد و فقط نقش‌های مجاز، گزینه‌های مدیریتی و صف بررسی را می‌بینند.",
             _markup([]),
         )
@@ -843,12 +951,16 @@ async def main_button_handler(message: Message, state: FSMContext, bot: Bot) -> 
         if not roles["school"]:
             await _render_from_message(message, state, bot, "این بخش فقط برای مدیر مدرسه است.", _markup([]))
             return
+        schools = await _admin_schools(message.from_user)
         rows = [
-            [_button("📅 ایجاد سال تحصیلی", "ui:form:year_new")],
-            [_button("🏫 ایجاد کلاس", "ui:form:class_new")],
-            [_button("👤 تعیین مدیر کلاس", "ui:form:class_manager_add")],
+            [_button(f"🏫 {name[:42]}", f"ui:school_manage:{school_id}")]
+            for school_id, name in schools
         ]
-        await _render_from_message(message, state, bot, "🏢 <b>پنل مدیریت مدرسه</b>", _markup(rows))
+        await _render_from_message(
+            message, state, bot,
+            "🏢 <b>مدیریت مدرسه</b>\nمدرسه‌ای را برای مدیریت انتخاب کن.",
+            _markup(rows),
+        )
         return
     if label == "🛡 پنل مدیر کل":
         _, roles = await _current_user(message)
@@ -857,7 +969,7 @@ async def main_button_handler(message: Message, state: FSMContext, bot: Bot) -> 
             return
         rows = [
             [_button("🏫 ایجاد مدرسه و سال تحصیلی", "ui:form:school_new")],
-            [_button("👤 تعیین مدیر مدرسه", "ui:form:school_admin_add")],
+            [_button("👤 تعیین مدیر مدرسه", "ui:school_admin_schools")],
         ]
         await _render_from_message(message, state, bot, "🛡 <b>پنل مدیر کل ClassMate</b>", _markup(rows))
         return
@@ -920,8 +1032,14 @@ async def class_action(callback: CallbackQuery, state: FSMContext, bot: Bot):
 
 @router.callback_query(F.data.startswith("ui:reminder_toggle:"))
 async def reminder_toggle(callback: CallbackQuery, state: FSMContext, bot: Bot):
-    _, _, class_id_raw, category, setting = callback.data.split(":")
-    class_id = int(class_id_raw)
+    try:
+        _, _, class_id_raw, category, setting = callback.data.split(":")
+        class_id = int(class_id_raw)
+        if class_id < 1 or category not in {"homework", "exams"} or setting not in {"off", "on"}:
+            raise ValueError
+    except (ValueError, TypeError):
+        await callback.answer("درخواست تنظیم یادآوری نامعتبر است.", show_alert=True)
+        return
     context = await _class_context(class_id, callback.from_user)
     if not context:
         await callback.answer("به این کلاس دسترسی نداری.", show_alert=True)
@@ -929,23 +1047,16 @@ async def reminder_toggle(callback: CallbackQuery, state: FSMContext, bot: Bot):
     async with SessionFactory() as session:
         async with session.begin():
             user = await _user(session, callback.from_user, private=True)
-            preference = await session.scalar(
-                select(NotificationPreference).where(
-                    NotificationPreference.user_id == user.id,
-                    NotificationPreference.class_id == class_id,
-                )
+            school_context = await get_class_with_school(session, class_id)
+            if not school_context:
+                await callback.answer("کلاس فعال پیدا نشد.", show_alert=True)
+                return
+            class_group, _, school = school_context
+            await update_user_reminder_preference(
+                session, user, class_group, school.timezone, category, setting == "on"
             )
-            if preference is None:
-                preference = NotificationPreference(user_id=user.id, class_id=class_id)
-                session.add(preference)
-            enabled = setting == "on"
-            if category == "homework":
-                preference.homework_enabled = enabled
-            elif category == "exams":
-                preference.exams_enabled = enabled
-    await callback.answer("تنظیم یادآوری ذخیره شد.")
-    # Re-render using a private Message action and the same panel message ID.
     await _show_action(callback.message, state, bot, callback.from_user, "reminders", class_id)
+    await callback.answer("تنظیم یادآوری ذخیره شد.")
 
 
 @router.callback_query(F.data == "ui:platform")
@@ -958,12 +1069,217 @@ async def school_panel(callback: CallbackQuery, state: FSMContext):
     await _show_school_panel(callback, state)
 
 
+@router.callback_query(F.data.startswith("ui:school_manage:"))
+async def school_management_panel(callback: CallbackQuery, state: FSMContext):
+    school_id = int(callback.data.rsplit(":", 1)[1])
+    await _show_school_management(callback, state, school_id)
+
+
+async def _issue_school_group_link(
+    callback: CallbackQuery,
+    state: FSMContext,
+    school_id: int,
+    *,
+    replace_existing: bool = False,
+) -> None:
+    if callback.message.chat.type != "private":
+        await callback.answer("ساخت لینک اتصال فقط از پنل خصوصی انجام می‌شود.", show_alert=True)
+        return
+    try:
+        bot_profile = await callback.bot.get_me()
+    except Exception:
+        await callback.answer("دریافت نام کاربری ربات ممکن نشد؛ دوباره تلاش کن.", show_alert=True)
+        return
+    if not bot_profile.username:
+        await callback.answer("برای ربات نام کاربری تنظیم نشده است.", show_alert=True)
+        return
+
+    token = f"CM_{make_code()}"
+    old_group_id = None
+    async with SessionFactory() as session:
+        async with session.begin():
+            actor = await _user(session, callback.from_user, private=True)
+            school = await session.scalar(
+                select(School).where(School.id == school_id).with_for_update()
+            )
+            if not school or not school.is_active or not await is_school_admin(session, actor, school_id):
+                await callback.answer("به مدیریت این مدرسه دسترسی نداری.", show_alert=True)
+                return
+            if school.telegram_group_id is not None and not replace_existing:
+                await callback.answer("این مدرسه از قبل گروه مرکزی دارد؛ برای تغییر، تأیید جداگانه لازم است.", show_alert=True)
+                return
+            if replace_existing:
+                old_group_id = school.telegram_group_id
+                school.telegram_group_id = None
+                school.telegram_group_title = None
+            school.group_link_token_hash = hash_code(token)
+            school.group_link_token_expires_at = datetime.now(ZoneInfo("UTC")) + timedelta(hours=24)
+            school_name = school.name
+
+    if old_group_id is not None:
+        try:
+            await callback.bot.send_message(
+                old_group_id,
+                f"ℹ️ اتصال گروه مرکزی مدرسه «{escape(school_name)}» تغییر کرده است. این گروه دیگر مقصد اطلاع‌رسانی مدرسه نیست.",
+            )
+        except Exception:
+            logger.info("Could not notify old school group %s about rebinding", old_group_id, exc_info=True)
+
+    link = f"https://t.me/{bot_profile.username}?startgroup={token}"
+    keyboard = InlineKeyboardMarkup(
+        inline_keyboard=[
+            [InlineKeyboardButton(text="➕ افزودن ربات به گروه مدرسه", url=link)]
+        ]
+    )
+    await callback.bot.send_message(
+        callback.from_user.id,
+        f"🔗 <b>لینک اتصال گروه مرکزی مدرسه {escape(school_name)}</b>\n"
+        "این لینک یک‌بارمصرف است و تا ۲۴ ساعت اعتبار دارد. ربات را در گروه مدیر کن و لینک را از داخل همان گروه اجرا کن.",
+        reply_markup=keyboard,
+    )
+    await _show_school_management(callback, state, school_id)
+
+
+@router.callback_query(F.data.startswith("ui:school_group_link:"))
+async def school_group_link(callback: CallbackQuery, state: FSMContext):
+    try:
+        school_id = int(callback.data.rsplit(":", 1)[1])
+        if school_id < 1:
+            raise ValueError
+    except (TypeError, ValueError):
+        await callback.answer("شناسه مدرسه نامعتبر است.", show_alert=True)
+        return
+    await _issue_school_group_link(callback, state, school_id)
+
+
+@router.callback_query(F.data.startswith("ui:school_group_reset_confirm:"))
+async def school_group_reset_confirm(callback: CallbackQuery, state: FSMContext):
+    try:
+        school_id = int(callback.data.rsplit(":", 1)[1])
+        if school_id < 1:
+            raise ValueError
+    except (TypeError, ValueError):
+        await callback.answer("شناسه مدرسه نامعتبر است.", show_alert=True)
+        return
+    async with SessionFactory() as session:
+        async with session.begin():
+            actor = await _user(session, callback.from_user, private=True)
+            school = await session.get(School, school_id)
+            if not school or not await is_school_admin(session, actor, school_id):
+                await callback.answer("به مدیریت این مدرسه دسترسی نداری.", show_alert=True)
+                return
+            group_title = school.telegram_group_title or str(school.telegram_group_id)
+    rows = [[
+        _button("بله، تغییر گروه", f"ui:school_group_reset_do:{school_id}"),
+        _button("خیر، برگشت", f"ui:school_manage:{school_id}"),
+    ]]
+    await _render_from_callback(
+        callback,
+        state,
+        f"⚠️ گروه مرکزی فعلی «{escape(group_title)}» از مدرسه جدا می‌شود.\n"
+        "پس از تأیید، لینک یک‌بارمصرف جدید برای اتصال گروه جایگزین صادر می‌شود.",
+        _markup(rows, f"ui:school_manage:{school_id}"),
+    )
+
+
+@router.callback_query(F.data.startswith("ui:school_group_reset_do:"))
+async def school_group_reset_do(callback: CallbackQuery, state: FSMContext):
+    try:
+        school_id = int(callback.data.rsplit(":", 1)[1])
+        if school_id < 1:
+            raise ValueError
+    except (TypeError, ValueError):
+        await callback.answer("شناسه مدرسه نامعتبر است.", show_alert=True)
+        return
+    await _issue_school_group_link(callback, state, school_id, replace_existing=True)
+
+
+@router.callback_query(F.data == "ui:school_admin_schools")
+async def school_admin_school_selector(callback: CallbackQuery, state: FSMContext):
+    _, roles = await _current_user(callback)
+    if not roles["platform"]:
+        await callback.answer("این عملیات فقط برای مدیر کل است.", show_alert=True)
+        return
+    schools = await _admin_schools(callback.from_user)
+    rows = [
+        [_button(f"🏫 {name[:42]}", f"ui:form:school_admin_add:{school_id}")]
+        for school_id, name in schools
+    ]
+    await _render_from_callback(
+        callback, state,
+        "مدرسه‌ای را برای تعیین مدیر انتخاب کن:",
+        _markup(rows, "ui:platform"),
+    )
+
+
+@router.callback_query(F.data.startswith("ui:school_classes:"))
+async def school_class_manager_selector(callback: CallbackQuery, state: FSMContext):
+    school_id = int(callback.data.rsplit(":", 1)[1])
+    async with SessionFactory() as session:
+        async with session.begin():
+            user = await _user(session, callback.from_user, private=True)
+            school = await session.get(School, school_id)
+            if not school or not await is_school_admin(session, user, school_id):
+                await callback.answer("به این مدرسه دسترسی نداری.", show_alert=True)
+                return
+            classes = list((await session.scalars(
+                select(ClassGroup)
+                .join(AcademicYear, ClassGroup.academic_year_id == AcademicYear.id)
+                .where(
+                    AcademicYear.school_id == school_id,
+                    ClassGroup.is_active.is_(True),
+                )
+                .order_by(ClassGroup.name)
+            )).all())
+    rows = [
+        [_button(f"👤 {item.name[:42]}", f"ui:form:class_manager_add:{item.id}")]
+        for item in classes
+    ]
+    await _render_from_callback(
+        callback, state,
+        "کلاسی را برای تعیین مدیر انتخاب کن:" if classes else "هنوز کلاسی در این مدرسه ثبت نشده است.",
+        _markup(rows, f"ui:school_manage:{school_id}"),
+    )
+
+
+@router.callback_query(F.data.startswith("ui:school_classes_view:"))
+async def school_classes_view(callback: CallbackQuery, state: FSMContext):
+    school_id = int(callback.data.rsplit(":", 1)[1])
+    async with SessionFactory() as session:
+        async with session.begin():
+            user = await _user(session, callback.from_user, private=True)
+            school = await session.get(School, school_id)
+            if not school or not await is_school_admin(session, user, school_id):
+                await callback.answer("به این مدرسه دسترسی نداری.", show_alert=True)
+                return
+            rows_data = list((await session.execute(
+                select(ClassGroup, AcademicYear)
+                .join(AcademicYear, ClassGroup.academic_year_id == AcademicYear.id)
+                .where(
+                    AcademicYear.school_id == school_id,
+                    ClassGroup.is_active.is_(True),
+                )
+                .order_by(AcademicYear.name.desc(), ClassGroup.name)
+            )).all())
+    rows = [
+        [_button(f"🏫 {item.name[:36]} · {item.grade[:12]}", f"ui:class:{item.id}")]
+        for item, _year in rows_data
+    ]
+    body = "📚 کلاس‌های مدرسه:" if rows else "برای این مدرسه هنوز کلاسی ثبت نشده است."
+    await _render_from_callback(
+        callback, state, body, _markup(rows, f"ui:school_manage:{school_id}")
+    )
+
+
 @router.callback_query(F.data.startswith("ui:form:"))
 async def form_panel(callback: CallbackQuery, state: FSMContext):
     parts = callback.data.split(":")
     form_name = parts[2]
-    class_id = int(parts[3]) if len(parts) > 3 else None
-    await _show_form(callback, state, form_name, class_id)
+    context_id = int(parts[3]) if len(parts) > 3 else None
+    if form_name in {"year_new", "class_new", "school_admin_add"}:
+        await _show_form(callback, state, form_name, school_id=context_id)
+    else:
+        await _show_form(callback, state, form_name, class_id=context_id)
 
 
 @router.callback_query(F.data == "ui:cancel_input")
@@ -971,17 +1287,20 @@ async def cancel_input(callback: CallbackQuery, state: FSMContext):
     data = await state.get_data()
     form_name = data.get("panel_form")
     class_id = data.get("panel_class_id")
+    school_id = data.get("panel_school_id")
     await state.set_state(None)
     await state.update_data(
         panel_form=None,
+        panel_school_id=None,
         **({"school_name": None} if form_name == "school_new" else {}),
     )
-    parent = _parent_for_form(form_name or "", class_id)
-    await callback.answer("عملیات لغو شد.")
+    parent = _parent_for_form(form_name or "", class_id, school_id)
     if parent == "ui:platform":
         await _show_platform_panel(callback, state)
     elif parent == "ui:school":
         await _show_school_panel(callback, state)
+    elif parent.startswith("ui:school_manage:"):
+        await _show_school_management(callback, state, int(parent.rsplit(":", 1)[1]))
     elif parent == "ui:classes":
         await _show_classes(callback, state, callback.from_user)
     elif parent.startswith("ui:class:"):
@@ -992,10 +1311,199 @@ async def cancel_input(callback: CallbackQuery, state: FSMContext):
         await _close_panel(callback, state)
 
 
+async def _show_cancelable_records(
+    callback: CallbackQuery,
+    state: FSMContext,
+    class_id: int,
+    notice: str | None = None,
+) -> None:
+    context = await _class_context(class_id, callback.from_user)
+    if not context or not (
+        context["is_manager"] or context["is_school_admin"] or context["is_platform_admin"]
+    ):
+        await callback.answer("فقط مدیر کلاس یا مدیر مدرسه می‌تواند رکوردها را لغو کند.", show_alert=True)
+        return
+    async with SessionFactory() as session:
+        async with session.begin():
+            homework_rows = await list_homework(session, class_id)
+            exam_rows = await list_exams(session, class_id)
+    rows = []
+    lines = ["🚫 <b>لغو اطلاعات تأییدشده</b>", "رکورد را انتخاب کن؛ قبل از لغو، تأیید جداگانه می‌گیری."]
+    if notice:
+        lines.append(f"\n{escape(notice)}")
+    for homework, subject in homework_rows[:8]:
+        rows.append([
+            _button(
+                f"📚 {subject.name[:14]} · {homework.title[:28]}",
+                f"ui:cancel_confirm:homework:{homework.id}:{class_id}",
+            )
+        ])
+    for exam, subject in exam_rows[:8]:
+        rows.append([
+            _button(
+                f"📝 {subject.name[:14]} · {exam.title[:28]}",
+                f"ui:cancel_confirm:exam:{exam.id}:{class_id}",
+            )
+        ])
+    if not rows:
+        lines.append("\nمورد تأییدشدهٔ فعالی برای لغو وجود ندارد.")
+    else:
+        lines.append("\nتکلیف و امتحان‌های آینده در فهرست زیر هستند.")
+    if len(homework_rows) > 8 or len(exam_rows) > 8:
+        lines.append("\nفقط ۸ مورد از هر دسته نمایش داده شده است.")
+    await _render_from_callback(
+        callback,
+        state,
+        "\n".join(lines),
+        _markup(rows, f"ui:manage:{class_id}"),
+    )
+
+
+@router.callback_query(F.data.startswith("ui:cancel_records:"))
+async def cancel_records_selector(callback: CallbackQuery, state: FSMContext):
+    try:
+        class_id = int(callback.data.rsplit(":", 1)[1])
+        if class_id < 1:
+            raise ValueError
+    except (ValueError, TypeError):
+        await callback.answer("شناسه کلاس نامعتبر است.", show_alert=True)
+        return
+    await _show_cancelable_records(callback, state, class_id)
+
+
+@router.callback_query(F.data.startswith("ui:cancel_confirm:"))
+async def cancel_record_confirm(callback: CallbackQuery, state: FSMContext):
+    try:
+        _, _, entity_type, entity_id_raw, class_id_raw = callback.data.split(":")
+        entity_id, class_id = int(entity_id_raw), int(class_id_raw)
+        if entity_type not in {"homework", "exam"} or entity_id < 1 or class_id < 1:
+            raise ValueError
+    except (AttributeError, TypeError, ValueError):
+        await callback.answer("درخواست لغو نامعتبر یا منقضی شده است.", show_alert=True)
+        return
+    context = await _class_context(class_id, callback.from_user)
+    if not context or not (
+        context["is_manager"] or context["is_school_admin"] or context["is_platform_admin"]
+    ):
+        await callback.answer("مجوز لغو این اطلاعات را نداری.", show_alert=True)
+        return
+    model = Homework if entity_type == "homework" else Exam
+    async with SessionFactory() as session:
+        async with session.begin():
+            selected = await session.execute(
+                select(model, Subject)
+                .join(Subject, model.subject_id == Subject.id)
+                .where(
+                    model.id == entity_id,
+                    model.class_id == class_id,
+                    model.status == "APPROVED",
+                )
+            )
+            selected_row = selected.first()
+    if selected_row is None:
+        await callback.answer("این رکورد دیگر فعال یا قابل لغو نیست.", show_alert=True)
+        return
+    record, subject = selected_row
+    label = "تکلیف" if entity_type == "homework" else "امتحان"
+    due_line = (
+        f"موعد تحویل: {jalali_date(record.due_on)}"
+        if entity_type == "homework"
+        else f"زمان امتحان: {jalali_datetime(record.scheduled_at, context['school'].timezone)}"
+    )
+    detail = (
+        f"درس: {escape(subject.name)}\n"
+        f"عنوان: {escape(record.title)}\n"
+        f"{due_line}"
+    )
+    rows = [[
+        _button("بله، لغو شود", f"ui:cancel_do:{entity_type}:{entity_id}:{class_id}"),
+        _button("خیر، برگشت", f"ui:cancel_records:{class_id}"),
+    ]]
+    await _render_from_callback(
+        callback,
+        state,
+        f"⚠️ <b>تأیید لغو {label}</b>\n"
+        f"{detail}\n\n"
+        "این رکورد حذف نمی‌شود و در تاریخچه می‌ماند، اما از فهرست فعال کنار می‌رود "
+        "و یادآوری‌های ارسال‌نشدهٔ آن لغو می‌شوند.\n\n"
+        "این عملیات قابل بازگردانی از پنل نیست.",
+        _markup(rows, f"ui:manage:{class_id}"),
+    )
+
+
+@router.callback_query(F.data.startswith("ui:cancel_do:"))
+async def cancel_record_execute(callback: CallbackQuery, state: FSMContext):
+    try:
+        _, _, entity_type, entity_id_raw, class_id_raw = callback.data.split(":")
+        entity_id, class_id = int(entity_id_raw), int(class_id_raw)
+        if entity_type not in {"homework", "exam"} or entity_id < 1 or class_id < 1:
+            raise ValueError
+    except (AttributeError, TypeError, ValueError):
+        await callback.answer("درخواست لغو نامعتبر یا منقضی شده است.", show_alert=True)
+        return
+
+    async with SessionFactory() as session:
+        async with session.begin():
+            actor = await _user(session, callback.from_user, private=True)
+            context = await get_class_with_school(session, class_id)
+            if not context:
+                await callback.answer("کلاس پیدا نشد.", show_alert=True)
+                return
+            class_group, _, school = context
+            manager = await session.scalar(
+                select(ClassMembership.id).where(
+                    ClassMembership.class_id == class_id,
+                    ClassMembership.user_id == actor.id,
+                    ClassMembership.role == "class_manager",
+                    ClassMembership.is_active.is_(True),
+                )
+            )
+            if not (
+                actor.is_platform_admin
+                or await is_school_admin(session, actor, school.id)
+                or manager is not None
+            ):
+                await callback.answer("مجوز لغو این اطلاعات را نداری.", show_alert=True)
+                return
+            success, result_text = await cancel_approved_record(
+                session,
+                entity_type,
+                entity_id,
+                actor.id,
+                school.id,
+                class_id,
+            )
+            group_id = class_group.group_chat_id
+
+    if success and group_id is not None:
+        label = "تکلیف" if entity_type == "homework" else "امتحان"
+        try:
+            await callback.bot.send_message(
+                group_id, f"🚫 یک {label} تأییدشده لغو شد؛ یادآوری‌های آیندهٔ آن متوقف شدند."
+            )
+        except Exception:
+            logger.exception("Failed to announce cancelled %s #%s", entity_type, entity_id)
+    await _show_cancelable_records(callback, state, class_id, notice=result_text)
+
+
 @router.callback_query(F.data.startswith("ui:review:"))
 async def review_callback(callback: CallbackQuery, state: FSMContext):
-    _, _, action, entity_type, entity_id_raw, class_id_raw = callback.data.split(":")
-    entity_id, class_id = int(entity_id_raw), int(class_id_raw)
+    try:
+        parts = callback.data.split(":")
+        if len(parts) != 6:
+            raise ValueError
+        _, _, action, entity_type, entity_id_raw, class_id_raw = parts
+        entity_id, class_id = int(entity_id_raw), int(class_id_raw)
+        if (
+            action not in {"approve", "reject"}
+            or entity_type not in {"homework", "exam", "report"}
+            or entity_id < 1
+            or class_id < 1
+        ):
+            raise ValueError
+    except (AttributeError, TypeError, ValueError):
+        await callback.answer("درخواست بررسی نامعتبر یا منقضی شده است.", show_alert=True)
+        return
     async with SessionFactory() as session:
         async with session.begin():
             user = await _user(session, callback.from_user, private=True)
@@ -1004,6 +1512,9 @@ async def review_callback(callback: CallbackQuery, state: FSMContext):
                 await callback.answer("مجوز بررسی این کلاس را نداری.", show_alert=True)
                 return
             class_group, _, school = context
+            submitter_telegram_id = await get_record_submitter_telegram_id(
+                session, entity_type, entity_id, class_id
+            )
             if action == "approve":
                 success, response = await approve_record(
                     session, entity_type, entity_id, user.id, school.id,
@@ -1016,22 +1527,51 @@ async def review_callback(callback: CallbackQuery, state: FSMContext):
                 )
     await callback.answer(response, show_alert=not success)
     if success:
+        entity_labels = {
+            "homework": "تکلیف",
+            "exam": "امتحان",
+            "report": "گزارش روزانه",
+        }
+        entity_label = entity_labels.get(entity_type, "اطلاعات")
         if class_group.group_chat_id:
             try:
                 await callback.bot.send_message(
                     class_group.group_chat_id,
-                    f"اطلاعات {entity_type} با شناسه {entity_id} بررسی شد.",
+                    f"{'✅' if action == 'approve' else '❌'} "
+                    f"{entity_label} ثبت‌شده بررسی شد.",
                 )
             except Exception:
                 logger.exception("Failed to notify class group after review")
+        if submitter_telegram_id is not None:
+            try:
+                message_text = (
+                    f"✅ {entity_label} ثبت‌شدهٔ تو تأیید شد و اکنون در اطلاعات قطعی کلاس نمایش داده می‌شود."
+                    if action == "approve"
+                    else f"❌ {entity_label} ثبت‌شدهٔ تو رد شد. برای جزئیات با مدیر کلاس تماس بگیر."
+                )
+                await callback.bot.send_message(submitter_telegram_id, message_text)
+            except Exception:
+                logger.info(
+                    "Could not privately notify submitter %s about %s #%s",
+                    submitter_telegram_id, entity_type, entity_id,
+                    exc_info=True,
+                )
         await _show_pending_from_message(
             callback.message, state, callback.bot, class_id, callback.from_user
         )
 
-
 def _parse_persian_int(value: str) -> int:
-    translated = value.translate(str.maketrans("۰۱۲۳۴۵۶۷۸۹", "0123456789"))
-    return int(translated)
+    """Parse integers written with Persian or Arabic-Indic digits as well as ASCII."""
+    digit_map = str.maketrans(
+        "۰۱۲۳۴۵۶۷۸۹٠١٢٣٤٥٦٧٨٩",
+        "01234567890123456789",
+    )
+    normalized = value.strip().translate(digit_map)
+    for separator in (",", "٬", " ", "\u00a0", "\u202f", "'"):
+        normalized = normalized.replace(separator, "")
+    if not normalized:
+        raise ValueError("عدد واردشده خالی است.")
+    return int(normalized)
 
 
 async def _handle_panel_input(message: Message, state: FSMContext, bot: Bot) -> None:
@@ -1039,6 +1579,7 @@ async def _handle_panel_input(message: Message, state: FSMContext, bot: Bot) -> 
     data = await state.get_data()
     form_name = data.get("panel_form")
     class_id = data.get("panel_class_id")
+    school_id = data.get("panel_school_id")
     await state.set_state(None)
     if not form_name:
         await _render_from_message(message, state, bot, "این فرم دیگر فعال نیست.", _markup([]))
@@ -1122,34 +1663,42 @@ async def _handle_panel_input(message: Message, state: FSMContext, bot: Bot) -> 
                         "این لینک تا ۲۴ ساعت معتبر است."
                     )
                 elif form_name == "school_admin_add":
-                    school_raw, telegram_raw = _parse_pipe_args(raw, 2)
-                    school_id, telegram_id = int(school_raw), int(telegram_raw)
                     if not actor.is_platform_admin:
                         raise PermissionError("فقط مدیر کل می‌تواند مدیر مدرسه تعیین کند.")
-                    school = await session.get(School, school_id)
+                    if school_id is not None:
+                        target_school_id = school_id
+                        telegram_id = _parse_persian_int(raw)
+                    else:
+                        school_raw, telegram_raw = _parse_pipe_args(raw, 2)
+                        target_school_id = _parse_persian_int(school_raw)
+                        telegram_id = _parse_persian_int(telegram_raw)
+                    school = await session.get(School, target_school_id)
                     target = await session.scalar(select(User).where(User.telegram_id == telegram_id))
-                    if not school or not target:
-                        raise ValueError("مدرسه یا کاربر پیدا نشد. کاربر باید ابتدا ربات را Start کرده باشد.")
+                    if not school or not school.is_active or not target or not target.is_active:
+                        raise ValueError("مدرسه فعال یا کاربر فعال پیدا نشد. کاربر باید ابتدا ربات را Start کرده باشد.")
                     membership = await session.scalar(
                         select(SchoolMembership).where(
-                            SchoolMembership.school_id == school_id,
+                            SchoolMembership.school_id == target_school_id,
                             SchoolMembership.user_id == target.id,
                         )
                     )
                     if membership is None:
-                        session.add(SchoolMembership(school_id=school_id, user_id=target.id, role="school_admin"))
+                        session.add(SchoolMembership(school_id=target_school_id, user_id=target.id, role="school_admin"))
                     else:
                         membership.role = "school_admin"
                         membership.is_active = True
                     result_text = "✅ مدیر مدرسه تعیین شد."
                 elif form_name == "year_new":
-                    school_raw, year_name = _parse_pipe_args(raw, 2)
-                    school_id = int(school_raw)
+                    if school_id is None:
+                        raise ValueError("مدرسه انتخاب نشده است؛ از پنل مدیریت دوباره شروع کن.")
+                    year_name = raw.strip()
+                    if not year_name or len(year_name) > 40:
+                        raise ValueError("نام سال تحصیلی باید بین ۱ تا ۴۰ نویسه باشد.")
                     if not await is_school_admin(session, actor, school_id):
                         raise PermissionError("مجوز مدیریت این مدرسه را نداری.")
                     school = await session.get(School, school_id)
-                    if not school:
-                        raise ValueError("مدرسه پیدا نشد.")
+                    if not school or not school.is_active:
+                        raise ValueError("مدرسه فعال پیدا نشد.")
                     existing = await session.scalar(
                         select(AcademicYear.id).where(
                             AcademicYear.school_id == school_id,
@@ -1173,11 +1722,19 @@ async def _handle_panel_input(message: Message, state: FSMContext, bot: Bot) -> 
                     await session.flush()
                     result_text = f"✅ سال تحصیلی جدید فعال شد. شناسه: <code>{year.id}</code>"
                 elif form_name == "class_new":
-                    school_raw, grade, section, name = _parse_pipe_args(raw, 4)
-                    school_id = int(school_raw)
+                    if school_id is None:
+                        raise ValueError("مدرسه انتخاب نشده است؛ از پنل مدیریت دوباره شروع کن.")
+                    grade, section, name = _parse_pipe_args(raw, 3)
+                    if not grade or not name:
+                        raise ValueError("پایه و نام کلاس الزامی هستند.")
+                    if len(grade) > 32 or len(section) > 32 or len(name) > 80:
+                        raise ValueError("حداکثر طول پایه و شعبه ۳۲ و نام کلاس ۸۰ نویسه است.")
                     school = await session.get(School, school_id)
-                    if not school or not await is_school_admin(session, actor, school_id):
-                        raise PermissionError("مدرسه پیدا نشد یا مجوز مدیریت آن را نداری.")
+                    if (
+                        not school or not school.is_active
+                        or not await is_school_admin(session, actor, school_id)
+                    ):
+                        raise PermissionError("مدرسه فعال پیدا نشد یا مجوز مدیریت آن را نداری.")
                     year = await session.scalar(
                         select(AcademicYear).where(
                             AcademicYear.school_id == school_id,
@@ -1190,19 +1747,24 @@ async def _handle_panel_input(message: Message, state: FSMContext, bot: Bot) -> 
                         academic_year_id=year.id,
                         name=name[:80],
                         grade=grade[:32],
-                        section=None if section == "-" else section[:32],
+                        section=None if section in {"", "-"} else section,
                     )
                     session.add(item)
                     await session.flush()
                     session.add(ClassMembership(class_id=item.id, user_id=actor.id, role="class_manager"))
                     result_text = f"✅ کلاس ایجاد شد. شناسه کلاس: <code>{item.id}</code>"
                 elif form_name == "class_manager_add":
-                    class_raw, telegram_raw = _parse_pipe_args(raw, 2)
-                    target_class_id, telegram_id = int(class_raw), int(telegram_raw)
+                    if class_id is not None:
+                        target_class_id = class_id
+                        telegram_id = _parse_persian_int(raw)
+                    else:
+                        class_raw, telegram_raw = _parse_pipe_args(raw, 2)
+                        target_class_id = _parse_persian_int(class_raw)
+                        telegram_id = _parse_persian_int(telegram_raw)
                     context = await get_class_with_school(session, target_class_id)
                     target = await session.scalar(select(User).where(User.telegram_id == telegram_id))
-                    if not context or not target:
-                        raise ValueError("کلاس یا کاربر پیدا نشد؛ کاربر باید ربات را Start کرده باشد.")
+                    if not context or not target or not target.is_active:
+                        raise ValueError("کلاس یا کاربر فعال پیدا نشد؛ کاربر باید ربات را Start کرده باشد.")
                     if not await is_school_admin(session, actor, context[2].id):
                         raise PermissionError("فقط مدیر مدرسه می‌تواند مدیر کلاس تعیین کند.")
                     membership = await session.scalar(
@@ -1234,10 +1796,10 @@ async def _handle_panel_input(message: Message, state: FSMContext, bot: Bot) -> 
                     )
                     if not actor.is_platform_admin and not await is_school_admin(session, actor, school.id) and manager is None:
                         raise PermissionError("مجوز مدیریت این کلاس را نداری.")
-                    telegram_id = int(raw)
+                    telegram_id = _parse_persian_int(raw)
                     target = await session.scalar(select(User).where(User.telegram_id == telegram_id))
-                    if not target:
-                        raise ValueError("این کاربر باید ابتدا ربات را در خصوصی Start کند.")
+                    if not target or not target.is_active:
+                        raise ValueError("کاربر فعال پیدا نشد؛ کاربر باید ابتدا ربات را Start کند.")
                     membership = await session.scalar(
                         select(ClassMembership).where(
                             ClassMembership.class_id == class_id,
@@ -1246,10 +1808,13 @@ async def _handle_panel_input(message: Message, state: FSMContext, bot: Bot) -> 
                     )
                     if membership is None:
                         session.add(ClassMembership(class_id=class_id, user_id=target.id, role="trusted_approver"))
+                        result_text = "✅ فرد مورد اعتماد به این کلاس اضافه شد."
+                    elif membership.role == "class_manager" and membership.is_active:
+                        result_text = "ℹ️ این کاربر از قبل مدیر کلاس است و مجوز بررسی دارد."
                     else:
                         membership.role = "trusted_approver"
                         membership.is_active = True
-                    result_text = "✅ فرد مورد اعتماد به این کلاس اضافه شد."
+                        result_text = "✅ فرد مورد اعتماد به این کلاس اضافه شد."
                 elif form_name == "subject_add":
                     if class_id is None:
                         raise ValueError("شناسه کلاس مشخص نیست.")
@@ -1285,8 +1850,8 @@ async def _handle_panel_input(message: Message, state: FSMContext, bot: Bot) -> 
                         starts_at = ends_at = None
                     else:
                         start_raw, end_raw = time_range.split("-", 1)
-                        sh, sm = (int(part) for part in start_raw.split(":"))
-                        eh, em = (int(part) for part in end_raw.split(":"))
+                        sh, sm = (_parse_persian_int(part) for part in start_raw.split(":"))
+                        eh, em = (_parse_persian_int(part) for part in end_raw.split(":"))
                         starts_at, ends_at = time(sh, sm), time(eh, em)
                         if starts_at >= ends_at:
                             raise ValueError("ساعت پایان باید بعد از ساعت شروع باشد.")
@@ -1336,11 +1901,17 @@ async def _handle_panel_input(message: Message, state: FSMContext, bot: Bot) -> 
                     )
                 else:
                     raise ValueError("این فرم شناخته نشده است.")
-        await state.update_data(panel_form=None, school_name=None)
+        await state.update_data(
+            panel_form=None,
+            panel_school_id=None,
+            school_name=None,
+        )
         if form_name == "join":
             back = "ui:classes"
         elif class_id:
             back = f"ui:manage:{class_id}"
+        elif form_name in {"year_new", "class_new"} and school_id is not None:
+            back = f"ui:school_manage:{school_id}"
         elif form_name in {"school_new", "school_admin_add"}:
             back = "ui:platform"
         else:
@@ -1428,12 +1999,22 @@ async def _handle_search_input(message: Message, state: FSMContext, bot: Bot) ->
     )
 
 
-@router.message(PanelInput.input)
+@router.message(
+    PanelInput.input,
+    F.text,
+    ~F.text.startswith("/"),
+    ~F.text.in_(MAIN_BUTTONS),
+)
+def _should_process_panel_text(text: str | None) -> bool:
+    """Only ordinary free text belongs to a pending form/search input."""
+    if not text or text.startswith("/"):
+        return False
+    return text.strip() not in MAIN_BUTTONS
+
+
 async def panel_text_input(message: Message, state: FSMContext, bot: Bot):
-    try:
-        await message.delete()
-    except TelegramBadRequest:
-        pass
+    # Keep submitted text in history; do not swallow commands or main-menu taps
+    # while a form is waiting for input.
     data = await state.get_data()
     if data.get("panel_form") == "search":
         await _handle_search_input(message, state, bot)
