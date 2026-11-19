@@ -17,6 +17,7 @@ def menu(rows: list[list[InlineKeyboardButton]], back: str | None = "v2:home"):
 def main_keyboard(*, platform_admin: bool, school_admin: bool, class_manager: bool, approver: bool):
     rows = [
         [button("🏫 کلاس‌های من", "v2:classes:open")],
+        [button("🔑 عضویت با کد", "v2:join")],
         [button("➕ ثبت اطلاعات", "v2:classes:new")],
         [button("📚 تکالیف", "v2:classes:homework"), button("📝 امتحانات", "v2:classes:exams")],
         [button("📅 برنامه هفتگی", "v2:classes:week"), button("🗒 امروز", "v2:classes:today")],
