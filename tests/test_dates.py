@@ -32,3 +32,47 @@ def test_normalize_subject_name():
 )
 def test_persian_weekday(weekday, expected):
     assert persian_weekday(weekday) == expected
+
+
+
+def test_next_timetable_occurrence_searches_from_valid_from_without_mutating_base():
+    from datetime import datetime, time
+    from zoneinfo import ZoneInfo
+
+    from classmate.domain.dates import next_timetable_occurrence
+
+    now = datetime(2026, 11, 20, 9, 0, tzinfo=ZoneInfo("Asia/Tehran"))
+    starts_at, ends_at = next_timetable_occurrence(
+        now=now,
+        weekday=0,  # Saturday
+        starts_at=time(8, 0),
+        ends_at=time(8, 45),
+        valid_from=date(2026, 11, 25),
+    )
+    assert starts_at.date() == date(2026, 11, 28)
+    assert starts_at.time() == time(8, 0)
+    assert ends_at.time() == time(8, 45)
+
+
+def test_next_timetable_occurrence_skips_today_when_lesson_time_has_passed():
+    from datetime import datetime, time
+    from zoneinfo import ZoneInfo
+
+    from classmate.domain.dates import next_timetable_occurrence
+
+    now = datetime(2026, 11, 21, 9, 0, tzinfo=ZoneInfo("Asia/Tehran"))
+    occurrence = next_timetable_occurrence(now, 0, time(8, 0))
+    assert occurrence is not None
+    assert occurrence[0].date() == date(2026, 11, 28)
+
+
+def test_next_timetable_occurrence_respects_valid_until():
+    from datetime import datetime, time
+    from zoneinfo import ZoneInfo
+
+    from classmate.domain.dates import next_timetable_occurrence
+
+    now = datetime(2026, 11, 22, 9, 0, tzinfo=ZoneInfo("Asia/Tehran"))
+    assert next_timetable_occurrence(
+        now, 0, time(8, 0), valid_until=date(2026, 11, 27)
+    ) is None
