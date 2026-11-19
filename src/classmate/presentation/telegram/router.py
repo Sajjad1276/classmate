@@ -569,6 +569,32 @@ async def _finish_flow(
     await message.answer(text, reply_markup=markup)
 
 
+async def _finish_school_flow(
+    message: Message,
+    state: FSMContext,
+    text: str,
+    school_id: int,
+) -> None:
+    data = await state.get_data()
+    panel_id = data.get("panel_message_id")
+    chat_id = data.get("panel_chat_id", message.chat.id)
+    await state.clear()
+    markup = menu([], f"v2:school:open:{school_id}")
+    if panel_id:
+        try:
+            await message.bot.edit_message_text(
+                text=text,
+                chat_id=chat_id,
+                message_id=panel_id,
+                reply_markup=markup,
+            )
+            await state.update_data(panel_message_id=panel_id, panel_chat_id=chat_id)
+            return
+        except TelegramBadRequest:
+            pass
+    await _send(message, state, text, markup)
+
+
 async def _home_markup_for_telegram(message: Message):
     async with SessionFactory() as session:
         async with session.begin():
@@ -1275,6 +1301,56 @@ async def form_input(message: Message, state: FSMContext, bot: Bot) -> None:
                     f"✅ مدرسه «{html(school.name)}» و سال «{html(year.name)}» ساخته شد.",
                 )
                 return
+
+        if flow == "academic_year_create":
+            if step != "name":
+                raise DomainError("مرحله ساخت سال تحصیلی نامعتبر است.")
+            async with SessionFactory() as session:
+                async with session.begin():
+                    year = await create_academic_year(
+                        session,
+                        user,
+                        school_id=int(data["school_id"]),
+                        name=value,
+                    )
+            await _finish_school_flow(
+                message,
+                state,
+                f"✅ سال تحصیلی «{html(year.name)}» ساخته و فعال شد.",
+                int(data["school_id"]),
+            )
+            return
+
+        if flow == "school_admin_assign":
+            if step != "telegram_id":
+                raise DomainError("مرحله تعیین مدیر مدرسه نامعتبر است.")
+            telegram_id = parse_positive_int(value)
+            async with SessionFactory() as session:
+                async with session.begin():
+                    if not user.is_platform_admin:
+                        raise Forbidden("فقط مدیر کل می‌تواند مدیر مدرسه تعیین کند.")
+                    target = await session.scalar(
+                        select(User).where(
+                            User.telegram_id == telegram_id,
+                            User.is_active.is_(True),
+                        )
+                    )
+                    if target is None or not target.private_chat_started:
+                        raise DomainError("این کاربر هنوز ربات را در گفت‌وگوی خصوصی Start نکرده است.")
+                    membership = await assign_school_admin(
+                        session,
+                        user,
+                        school_id=int(data["school_id"]),
+                        target=target,
+                    )
+                    school = await session.get(School, int(data["school_id"]))
+            await _finish_school_flow(
+                message,
+                state,
+                f"✅ {html(target.full_name)} مدیر مدرسه «{html(school.name)}» شد.",
+                int(data["school_id"]),
+            )
+            return
 
         if flow == "class_create":
             if step == "grade":
