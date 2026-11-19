@@ -85,6 +85,7 @@ MAIN_BUTTONS = {
     "🏢 مدیریت مدرسه",
     "🛡 پنل مدیر کل",
     "❌ لغو عملیات",
+    "⬅️ بازگشت به منو",
 }
 
 ACTION_LABELS = {
@@ -703,7 +704,7 @@ async def main_button_handler(message: Message, state: FSMContext, bot: Bot) -> 
         await message.delete()
     except TelegramBadRequest:
         pass
-    if label == "❌ لغو عملیات":
+    if label in {"❌ لغو عملیات", "⬅️ بازگشت به منو"}:
         _, roles = await _current_user(message)
         await message.answer(
             "عملیات جاری لغو شد. اطلاعات ناقص ذخیره نشده است.",
