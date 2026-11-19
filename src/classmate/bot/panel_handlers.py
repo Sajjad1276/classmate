@@ -111,6 +111,14 @@ def _button(text: str, data: str) -> InlineKeyboardButton:
     return InlineKeyboardButton(text=text, callback_data=data)
 
 
+def _should_create_panel_message(
+    panel_message_id: int | None,
+    reply_keyboard_visible: bool,
+) -> bool:
+    """A visible reply keyboard must be removed on a fresh message, not an edit."""
+    return panel_message_id is None or reply_keyboard_visible
+
+
 async def _render_from_message(
     message: Message,
     state: FSMContext,
@@ -122,7 +130,8 @@ async def _render_from_message(
     data = await state.get_data()
     panel_id = data.get("panel_message_id")
     keyboard_visible = data.get("reply_keyboard_visible", False)
-    if panel_id and not keyboard_visible:
+    create_new_panel = _should_create_panel_message(panel_id, keyboard_visible)
+    if panel_id and not create_new_panel:
         try:
             await bot.edit_message_text(
                 text=text,
@@ -135,7 +144,7 @@ async def _render_from_message(
             if "message is not modified" in str(exc).lower():
                 return
             logger.info("Could not edit previous panel message: %s", exc)
-    if panel_id and keyboard_visible:
+    if panel_id and create_new_panel:
         try:
             await bot.delete_message(message.chat.id, panel_id)
         except TelegramBadRequest:
