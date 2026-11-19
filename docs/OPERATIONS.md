@@ -1,29 +1,34 @@
 # Operations runbook
 
-## First school setup
+## First platform-admin setup
 
-1. Add the owner's numeric Telegram user ID to `BOOTSTRAP_ADMIN_IDS` in Railway Variables on both `classmate` and `classmate-worker`.
-2. In a private chat, send `/start` to the bot.
-3. Create the school and academic year with `/school_new`.
-4. Create the class with `/class_new`.
-5. Add school admins, class managers and trusted approvers with the role-management commands documented in the root README.
+1. Add the owner's numeric Telegram user ID to `BOOTSTRAP_ADMIN_IDS` on the `classmate` bot service.
+2. Open a private chat with the configured bot and press **Start**.
+3. Confirm that the **پنل مدیر کل** button appears. The application sets the platform-admin role when the Telegram ID matches the configured list.
+4. Use the platform panel to create a school and its first academic year.
+5. Use **مدیریت مدرسه** to create classes and appoint school/class managers.
+6. Use a class dashboard's **مدیریت این کلاس** panel to add trusted approvers, subjects and timetable slots.
 
-The bootstrap list is only for the first platform-admin setup. Keep it limited to trusted owners.
+The bootstrap list is only for the first platform-admin setup. Keep it limited to trusted owners. Do not send the bot token or admin credentials in chat.
 
-## Group onboarding
+## Student onboarding
 
-1. Generate class connection/student invitation codes using `/class_code`.
-2. Add the bot to the class Telegram group and promote it only as much as needed to receive commands and send messages.
-3. As a group administrator, run `/connect <connection-code>`.
-4. Students start the bot privately and run `/join <student-code>`.
-5. Configure subjects and timetable slots.
+1. The class manager creates codes from **مدیریت این کلاس → ساخت کد اتصال و عضویت**.
+2. Give the 7-day student invitation code only to intended members.
+3. Students open the bot privately, press Start, choose **عضویت در کلاس**, and enter the code.
+4. Students use **ثبت اطلاعات** to submit homework, exams and daily reports.
+5. Trusted approvers use **صف بررسی** to approve/reject submissions.
+
+## Group onboarding status
+
+Private-chat navigation is button-driven. Group activities and the group-specific button panel are the next implementation phase; this runbook does not treat old slash-command group handlers as a completed group interface. Keep Telegram Privacy Mode enabled. Do not rely on arbitrary group-message reading.
 
 ## Routine checks
 
-- Confirm both application deployments are running and PostgreSQL is healthy.
+- Confirm the bot and worker deployments are running and PostgreSQL is healthy.
 - Review Railway deploy logs for database connection, Telegram polling and worker retry errors.
-- Use `/pending` for approval queues, `/homework`, `/exams`, `/today` and `/week` for class queries.
-- Keep only one active bot polling process for a given token.
+- Keep only one active long-polling process for the production bot token.
+- Confirm the deployed bot identity matches the intended ClassMate username before inviting real students.
 
 ## Recovery
 
