@@ -67,6 +67,8 @@ from classmate.services.records import (
     list_reports,
     normalize_subject_name,
     reject_record,
+    list_daily_summary,
+    list_current_timetable,
 )
 
 router = Router(name="classmate")
@@ -429,16 +431,8 @@ async def group_menu_action(callback: CallbackQuery, bot: Bot):
                     await list_exams(session, class_group.id), school.timezone
                 )
             elif action == "week":
-                entries = list(
-                    (
-                        await session.execute(
-                            select(TimetableEntry, Subject)
-                            .join(Subject, TimetableEntry.subject_id == Subject.id)
-                            .where(TimetableEntry.class_id == class_group.id)
-                            .order_by(TimetableEntry.weekday, TimetableEntry.period)
-                        )
-                    ).all()
-                )
+                today = datetime.now(ZoneInfo(school.timezone)).date()
+                entries = await list_current_timetable(session, class_group.id, today)
                 answer = (
                     "برنامه هفتگی هنوز برای این کلاس ثبت نشده است."
                     if not entries
@@ -453,15 +447,9 @@ async def group_menu_action(callback: CallbackQuery, bot: Bot):
             elif action == "today":
                 zone = ZoneInfo(school.timezone)
                 today = datetime.now(zone).date()
-                reports = await list_reports(session, class_group.id, today)
-                homework_rows = [
-                    row for row in await list_homework(session, class_group.id)
-                    if row[0].due_on == today
-                ]
-                exam_rows = [
-                    row for row in await list_exams(session, class_group.id)
-                    if row[0].scheduled_at.astimezone(zone).date() == today
-                ]
+                reports, homework_rows, exam_rows = await list_daily_summary(
+                    session, class_group.id, today, school.timezone
+                )
                 parts = [f"🗓 <b>خلاصه امروز — {jalali_date(today)}</b>"]
                 if reports:
                     parts.extend(
@@ -469,6 +457,11 @@ async def group_menu_action(callback: CallbackQuery, bot: Bot):
                         for report in reports
                     )
                 else:
+                    parts.append("\n🗒 گزارش تأییدشده‌ای برای امروز ثبت نشده است.")
+                parts.append("\n" + _format_homework(homework_rows))
+                parts.append("\n" + _format_exams(exam_rows, school.timezone))
+                answer = "\n".join(parts)
+            else:
                     parts.append("\n🗒 گزارش تأییدشده‌ای برای امروز ثبت نشده است.")
                 parts.append("\n" + _format_homework(homework_rows))
                 parts.append("\n" + _format_exams(exam_rows, school.timezone))
@@ -1522,16 +1515,20 @@ async def today_command(message: Message):
                 return
             class_group, _, school = context
             today = datetime.now(ZoneInfo(school.timezone)).date()
-            reports = await list_reports(session, class_group.id, today)
-    if not reports:
-        await message.answer("برای امروز گزارش تأییدشده‌ای ثبت نشده است.")
-    else:
-        for report in reports:
-            await message.answer(
-                f"🗒 <b>{escape(report.title or 'گزارش روزانه')}</b>\n"
-                f"{jalali_date(report.report_date)}\n{escape(report.body)}"
+            reports, homework_rows, exam_rows = await list_daily_summary(
+                session, class_group.id, today, school.timezone
             )
-
+    parts_out = [f"🗓 <b>خلاصه امروز — {jalali_date(today)}</b>"]
+    if reports:
+        parts_out.extend(
+            f"\n🗒 <b>{escape(report.title or 'گزارش روزانه')}</b>\n{escape(report.body)}"
+            for report in reports
+        )
+    else:
+        parts_out.append("\n🗒 گزارش تأییدشده‌ای برای امروز ثبت نشده است.")
+    parts_out.append("\n" + _format_homework(homework_rows))
+    parts_out.append("\n" + _format_exams(exam_rows, school.timezone))
+    await message.answer("\n".join(parts_out))
 
 
 @router.message(Command("timetable_set"))
@@ -1637,17 +1634,9 @@ async def week_command(message: Message):
             if not context:
                 await message.answer("کلاس مشخص نیست.")
                 return
-            class_group = context[0]
-            entries = list(
-                (
-                    await session.execute(
-                        select(TimetableEntry, Subject)
-                        .join(Subject, TimetableEntry.subject_id == Subject.id)
-                        .where(TimetableEntry.class_id == class_group.id)
-                        .order_by(TimetableEntry.weekday, TimetableEntry.period)
-                    )
-                ).all()
-            )
+            class_group, _, school = context
+            today = datetime.now(ZoneInfo(school.timezone)).date()
+            entries = await list_current_timetable(session, class_group.id, today)
     if not entries:
         await message.answer("برنامه هفتگی هنوز برای این کلاس ثبت نشده است.")
         return
