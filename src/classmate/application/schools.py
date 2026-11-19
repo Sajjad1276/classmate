@@ -48,15 +48,18 @@ async def create_school(
 async def create_academic_year(
     session: AsyncSession, actor: User, *, school_id: int, name: str
 ) -> AcademicYear:
-    school = await session.get(School, school_id)
-    if school is None or not school.is_active:
+    school = await session.scalar(
+        select(School)
+        .where(School.id == school_id, School.is_active.is_(True))
+        .with_for_update()
+    )
+    if school is None:
         raise NotFound("مدرسه فعال پیدا نشد.")
     if not await school_admin_for(session, actor, school_id):
         raise Forbidden("مدیر این مدرسه نیستی.")
     clean_name = normalize_name(name, minimum=4, maximum=40)
     year = AcademicYear(school_id=school_id, name=clean_name, is_current=True)
     try:
-        await session.flush()
         await session.execute(
             update(AcademicYear)
             .where(AcademicYear.school_id == school_id)
