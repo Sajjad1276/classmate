@@ -867,10 +867,8 @@ async def main_button_handler(message: Message, state: FSMContext, bot: Bot) -> 
         **({"panel_message_id": panel_message_id} if panel_message_id is not None else {}),
         reply_keyboard_visible=True,
     )
-    try:
-        await message.delete()
-    except TelegramBadRequest:
-        pass
+    # Keep the user's tapped reply-keyboard label in chat history.
+    # Deleting it made button taps look like the bot was erasing messages.
     if label == "⬅️ بازگشت":
         if panel_message_id is not None:
             try:
