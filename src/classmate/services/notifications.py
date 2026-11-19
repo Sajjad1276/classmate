@@ -5,7 +5,7 @@ from zoneinfo import ZoneInfo
 from sqlalchemy import or_, select
 from sqlalchemy.ext.asyncio import AsyncSession
 
-from classmate.domain.enums import EntityType, ReminderStatus
+from classmate.domain.enums import EntityType
 from classmate.db.models import (
     ClassGroup,
     ClassMembership,
