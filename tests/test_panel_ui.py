@@ -2,6 +2,8 @@ from classmate.bot.panel_handlers import _should_create_panel_message
 from classmate.bot.keyboards import (
     group_menu_keyboard,
     main_reply_keyboard,
+    reminder_class_picker,
+    reminder_preferences_keyboard,
     wizard_cancel_keyboard,
 )
 
@@ -93,3 +95,27 @@ def test_panel_message_edited_when_reply_keyboard_is_hidden():
 
 def test_panel_created_when_no_previous_message_exists():
     assert _should_create_panel_message(None, False)
+
+
+
+def test_reminder_class_picker_uses_class_scoped_callback_data():
+    from types import SimpleNamespace
+
+    markup = reminder_class_picker([SimpleNamespace(id=37, name="دهم تجربی")])
+    button = markup.inline_keyboard[0][0]
+
+    assert button.text == "🏫 دهم تجربی"
+    assert button.callback_data == "reminders:class:37"
+
+
+def test_reminder_preferences_keyboard_exposes_current_state_and_next_value():
+    markup = reminder_preferences_keyboard(
+        37, homework_enabled=True, exams_enabled=False
+    )
+    buttons = [button for row in markup.inline_keyboard for button in row]
+
+    assert buttons[0].text == "🟢 تکالیف: روشن"
+    assert buttons[0].callback_data == "reminders:set:homework:37:0"
+    assert buttons[1].text == "⚫ امتحان‌ها: خاموش"
+    assert buttons[1].callback_data == "reminders:set:exams:37:1"
+    assert buttons[2].callback_data == "reminders:list"
