@@ -175,15 +175,33 @@ async def _send(
 
 
 async def _return_home(message: Message, state: FSMContext, user: User) -> None:
+    saved = await state.get_data()
+    panel_id = saved.get("panel_message_id")
+    panel_chat_id = saved.get("panel_chat_id", message.chat.id)
     markup = await _main_markup(user)
     await state.clear()
-    await _send(
-        message,
-        state,
-        "🏫 <b>ClassMate</b>\nاز منوی زیر بخش موردنظر را انتخاب کن.",
-        markup,
-    )
-
+    text = "🏫 <b>ClassMate</b>\\nاز منوی زیر بخش موردنظر را انتخاب کن."
+    if panel_id and panel_chat_id == message.chat.id:
+        try:
+            await message.bot.edit_message_text(
+                text=text,
+                chat_id=panel_chat_id,
+                message_id=panel_id,
+                reply_markup=markup,
+            )
+            await state.update_data(
+                panel_message_id=panel_id,
+                panel_chat_id=panel_chat_id,
+            )
+            return
+        except TelegramBadRequest as exc:
+            if "message is not modified" in str(exc).lower():
+                await state.update_data(
+                    panel_message_id=panel_id,
+                    panel_chat_id=panel_chat_id,
+                )
+                return
+    await _send(message, state, text, markup)
 
 async def _classes_for_user(user: User) -> list[ClassGroup]:
     async with SessionFactory() as session:
