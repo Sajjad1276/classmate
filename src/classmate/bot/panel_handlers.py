@@ -1999,12 +1999,15 @@ async def _handle_search_input(message: Message, state: FSMContext, bot: Bot) ->
     )
 
 
-@router.message(PanelInput.input)
+@router.message(
+    PanelInput.input,
+    F.text,
+    ~F.text.startswith("/"),
+    ~F.text.in_(MAIN_BUTTONS),
+)
 async def panel_text_input(message: Message, state: FSMContext, bot: Bot):
-    try:
-        await message.delete()
-    except TelegramBadRequest:
-        pass
+    # Keep submitted text in history; do not swallow commands or main-menu taps
+    # while a form is waiting for input.
     data = await state.get_data()
     if data.get("panel_form") == "search":
         await _handle_search_input(message, state, bot)
