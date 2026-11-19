@@ -733,7 +733,7 @@ async def _create_class_codes(callback: CallbackQuery, state: FSMContext, class_
 
 @router.message(
     F.chat.type == "private",
-    F.text.startswith("/") & ~F.text.startswith("/start"),
+    F.text.startswith("/") & ~F.text.startswith("/start") & ~F.text.startswith("/cancel_record"),
 )
 async def private_slash_command_notice(message: Message):
     _, roles = await _current_user(message)
