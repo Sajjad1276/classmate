@@ -180,13 +180,28 @@ async def _send(
     await state.update_data(panel_message_id=sent.message_id, panel_chat_id=sent.chat.id)
 
 
-async def _return_home(message: Message, state: FSMContext, user: User) -> None:
+def _welcome_text(user: User) -> str:
+    return (
+        f"• درود بیکران 🕊 {html(user.full_name)}، به ربات ClassMate خوش آمدید.\\n\\n"
+        "📇 - در اینجا می‌تونید امور مدرسه رو به صورت حرفه‌ای و پیشرفته مدیریت کنید.\\n\\n"
+        f"• آیدی شما: <code>{user.telegram_id}</code>\\n\\n"
+        "🪎 جهت ادامه، دستور مورد نظر رو از پنل زیر وارد کنید:"
+    )
+
+
+async def _return_home(
+    message: Message,
+    state: FSMContext,
+    user: User,
+    *,
+    panel_text: str | None = None,
+) -> None:
     saved = await state.get_data()
     panel_id = saved.get("panel_message_id")
     panel_chat_id = saved.get("panel_chat_id", message.chat.id)
     markup = await _main_markup(user)
     await state.clear()
-    text = "🏫 <b>ClassMate</b>\\nاز منوی زیر بخش موردنظر را انتخاب کن."
+    text = panel_text or "🏫 <b>ClassMate</b>\\nاز منوی زیر بخش موردنظر را انتخاب کن."
     if panel_id and panel_chat_id == message.chat.id:
         try:
             await message.bot.edit_message_text(
@@ -724,7 +739,7 @@ async def start(message: Message, state: FSMContext, bot: Bot) -> None:
     async with SessionFactory() as session:
         async with session.begin():
             user = await _user(session, message.from_user, private=True)
-    await _return_home(message, state, user)
+    await _return_home(message, state, user, panel_text=_welcome_text(user))
 
 
 @router.message(Command("help"))
