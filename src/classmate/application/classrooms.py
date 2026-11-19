@@ -176,9 +176,7 @@ async def set_timetable_slot(
 async def assign_class_manager(
     session: AsyncSession, actor: User, class_id: int, target: User
 ) -> ClassMembership:
-    _, year, school = await require_class_role(
-        session, actor, class_id, {Role.CLASS_MANAGER}
-    )
+    await require_class_role(session, actor, class_id, {Role.CLASS_MANAGER})
     membership = await session.scalar(
         select(ClassMembership).where(
             ClassMembership.class_id == class_id,
