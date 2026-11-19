@@ -1190,6 +1190,7 @@ async def _show_cancelable_records(
     callback: CallbackQuery,
     state: FSMContext,
     class_id: int,
+    notice: str | None = None,
 ) -> None:
     context = await _class_context(class_id, callback.from_user)
     if not context or not (
@@ -1203,6 +1204,8 @@ async def _show_cancelable_records(
             exam_rows = await list_exams(session, class_id)
     rows = []
     lines = ["🚫 <b>لغو اطلاعات تأییدشده</b>", "رکورد را انتخاب کن؛ قبل از لغو، تأیید جداگانه می‌گیری."]
+    if notice:
+        lines.append(f"\\n{escape(notice)}")
     for homework, subject in homework_rows[:8]:
         rows.append([
             _button(
@@ -1246,7 +1249,7 @@ async def cancel_records_selector(callback: CallbackQuery, state: FSMContext):
 @router.callback_query(F.data.startswith("ui:cancel_confirm:"))
 async def cancel_record_confirm(callback: CallbackQuery, state: FSMContext):
     try:
-        _, _, _, entity_type, entity_id_raw, class_id_raw = callback.data.split(":")
+        _, _, entity_type, entity_id_raw, class_id_raw = callback.data.split(":")
         entity_id, class_id = int(entity_id_raw), int(class_id_raw)
         if entity_type not in {"homework", "exam"} or entity_id < 1 or class_id < 1:
             raise ValueError
@@ -1278,7 +1281,7 @@ async def cancel_record_confirm(callback: CallbackQuery, state: FSMContext):
 @router.callback_query(F.data.startswith("ui:cancel_do:"))
 async def cancel_record_execute(callback: CallbackQuery, state: FSMContext):
     try:
-        _, _, _, entity_type, entity_id_raw, class_id_raw = callback.data.split(":")
+        _, _, entity_type, entity_id_raw, class_id_raw = callback.data.split(":")
         entity_id, class_id = int(entity_id_raw), int(class_id_raw)
         if entity_type not in {"homework", "exam"} or entity_id < 1 or class_id < 1:
             raise ValueError
@@ -1319,7 +1322,6 @@ async def cancel_record_execute(callback: CallbackQuery, state: FSMContext):
             )
             group_id = class_group.group_chat_id
 
-    await callback.answer(result_text, show_alert=not success)
     if success and group_id is not None:
         label = "تکلیف" if entity_type == "homework" else "امتحان"
         try:
@@ -1328,7 +1330,7 @@ async def cancel_record_execute(callback: CallbackQuery, state: FSMContext):
             )
         except Exception:
             logger.exception("Failed to announce cancelled %s #%s", entity_type, entity_id)
-    await _show_cancelable_records(callback, state, class_id)
+    await _show_cancelable_records(callback, state, class_id, notice=result_text)
 
 
 @router.callback_query(F.data.startswith("ui:review:"))
