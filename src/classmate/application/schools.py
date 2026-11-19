@@ -8,8 +8,7 @@ from classmate.application.access import school_admin_for
 from classmate.db.models import AcademicYear, ClassGroup, School, SchoolMembership, User
 from classmate.domain.errors import Conflict, Forbidden, NotFound, ValidationError
 from classmate.domain.text import normalize_name
-from classmate.services.permissions import hash_code
-from classmate.application.classrooms import make_invite_code
+from classmate.domain.codes import generate_code, hash_code
 
 
 async def create_school(
@@ -159,7 +158,7 @@ async def issue_school_group_link(
         raise NotFound("مدرسه فعال پیدا نشد.")
     if not await school_admin_for(session, actor, school_id):
         raise Forbidden("مدیر این مدرسه نیستی.")
-    code = make_invite_code()
+    code = generate_code()
     school.group_link_token_hash = hash_code(code)
     school.group_link_token_expires_at = datetime.now(timezone.utc) + timedelta(hours=24)
     await session.flush()
