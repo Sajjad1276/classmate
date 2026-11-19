@@ -45,6 +45,7 @@ def class_dashboard(
     *,
     can_review: bool,
     can_manage: bool,
+    group_mode: bool = False,
 ):
     rows = [
         [button("➕ ثبت تکلیف، امتحان یا گزارش", f"v2:new:{class_id}")],
@@ -52,14 +53,18 @@ def class_dashboard(
          button("📝 امتحانات", f"v2:action:exams:{class_id}")],
         [button("📅 برنامه هفتگی", f"v2:action:week:{class_id}"),
          button("🗒 خلاصه امروز", f"v2:action:today:{class_id}")],
-        [button("🔔 یادآوری‌های من", f"v2:action:reminders:{class_id}"),
-         button("🔎 جست‌وجو", f"v2:action:search:{class_id}")],
+    ]
+    if not group_mode:
+        rows.append([
+            button("🔔 یادآوری‌های من", f"v2:action:reminders:{class_id}"),
+            button("🔎 جست‌وجو", f"v2:action:search:{class_id}"),
+        ])
     ]
     if can_review:
         rows.append([button("🕓 صف بررسی", f"v2:action:pending:{class_id}")])
-    if can_manage:
+    if can_manage and not group_mode:
         rows.append([button("⚙️ مدیریت کلاس", f"v2:action:manage:{class_id}")])
-    return menu(rows, back="v2:home")
+    return menu(rows, back=None if group_mode else "v2:home")
 
 
 def record_types(class_id: int):
