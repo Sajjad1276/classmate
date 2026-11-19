@@ -24,6 +24,8 @@ from classmate.services.records import (
     get_subject,
     reject_record,
     soft_delete_subject,
+    soft_delete_class_subject,
+    soft_delete_timetable_entry,
 )
 
 
@@ -96,7 +98,6 @@ async def test_approval_self_approval_guard_and_cancellation(db_session):
     assert "غیرفعال" in message
     assert homework.status == RecordStatus.CANCELLED
     assert homework.cancelled_at is not None
-    from sqlalchemy import select
     reminder = await db_session.scalar(select(ReminderJob).where(ReminderJob.dedupe_key == "integration:cancel:homework:1"))
     assert reminder.status == ReminderStatus.CANCELLED
 
@@ -130,7 +131,7 @@ async def test_soft_delete_subject_cascades_to_links_and_can_be_restored(db_sess
     assert await soft_delete_subject(db_session, subject.id)
     assert subject.deleted_at is not None
     link = await db_session.scalar(
-        __import__("sqlalchemy").select(ClassSubject).where(ClassSubject.subject_id == subject.id)
+        select(ClassSubject).where(ClassSubject.subject_id == subject.id)
     )
     assert link.deleted_at is not None
     assert entry.deleted_at is not None
@@ -154,3 +155,37 @@ async def test_role_permissions_for_trusted_approver_and_school_admin(db_session
     await db_session.flush()
     assert await is_school_admin(db_session, school_admin, school.id)
     assert await user_can_access_class(db_session, school_admin, class_group.id)
+
+
+@pytest.mark.asyncio
+async def test_soft_delete_class_subject_hides_subject_and_timetable_slot(db_session):
+    school, class_group, creator, approver, subject = await _seed_class(db_session)
+    entry = TimetableEntry(
+        class_id=class_group.id, subject_id=subject.id, weekday=1,
+        period=2, starts_at=time(9, 0), ends_at=time(9, 45),
+    )
+    db_session.add(entry)
+    await db_session.flush()
+
+    assert await soft_delete_class_subject(db_session, class_group.id, subject.id)
+    link = await db_session.scalar(
+        select(ClassSubject).where(ClassSubject.class_id == class_group.id)
+    )
+    assert link.deleted_at is not None
+    assert entry.deleted_at is not None
+    assert await get_subject(db_session, class_group.id, school.id, "Mathematics") is None
+
+
+@pytest.mark.asyncio
+async def test_soft_delete_timetable_entry_is_idempotent(db_session):
+    school, class_group, creator, approver, subject = await _seed_class(db_session)
+    entry = TimetableEntry(
+        class_id=class_group.id, subject_id=subject.id, weekday=1,
+        period=3, starts_at=time(10, 0), ends_at=time(10, 45),
+    )
+    db_session.add(entry)
+    await db_session.flush()
+
+    assert await soft_delete_timetable_entry(db_session, entry.id)
+    assert entry.deleted_at is not None
+    assert not await soft_delete_timetable_entry(db_session, entry.id)
