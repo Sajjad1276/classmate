@@ -121,7 +121,8 @@ async def _render_from_message(
     """Edit the existing panel message; create one only when no panel exists."""
     data = await state.get_data()
     panel_id = data.get("panel_message_id")
-    if panel_id:
+    keyboard_visible = data.get("reply_keyboard_visible", False)
+    if panel_id and not keyboard_visible:
         try:
             await bot.edit_message_text(
                 text=text,
@@ -134,6 +135,11 @@ async def _render_from_message(
             if "message is not modified" in str(exc).lower():
                 return
             logger.info("Could not edit previous panel message: %s", exc)
+    if panel_id and keyboard_visible:
+        try:
+            await bot.delete_message(message.chat.id, panel_id)
+        except TelegramBadRequest:
+            pass
     sent = await bot.send_message(
         message.chat.id,
         text,
@@ -145,7 +151,10 @@ async def _render_from_message(
             message_id=sent.message_id,
             reply_markup=keyboard,
         )
-    await state.update_data(panel_message_id=sent.message_id)
+    await state.update_data(
+        panel_message_id=sent.message_id,
+        reply_keyboard_visible=False,
+    )
 
 
 async def _render_from_callback(
@@ -156,11 +165,17 @@ async def _render_from_callback(
 ) -> None:
     try:
         await callback.message.edit_text(text, reply_markup=keyboard)
-        await state.update_data(panel_message_id=callback.message.message_id)
+        await state.update_data(
+            panel_message_id=callback.message.message_id,
+            reply_keyboard_visible=False,
+        )
     except TelegramBadRequest as exc:
         if "message is not modified" not in str(exc).lower():
             sent = await callback.message.answer(text, reply_markup=keyboard)
-            await state.update_data(panel_message_id=sent.message_id)
+            await state.update_data(
+                panel_message_id=sent.message_id,
+                reply_keyboard_visible=False,
+            )
     await callback.answer()
 
 
@@ -176,6 +191,7 @@ async def _close_panel(
         except TelegramBadRequest:
             pass
     await state.clear()
+    await state.update_data(reply_keyboard_visible=True)
     _, roles = await _current_user(callback)
     await callback.bot.send_message(
         callback.message.chat.id,
@@ -827,8 +843,10 @@ async def main_button_handler(message: Message, state: FSMContext, bot: Bot) -> 
     saved = await state.get_data()
     panel_message_id = saved.get("panel_message_id")
     await state.clear()
-    if panel_message_id is not None:
-        await state.update_data(panel_message_id=panel_message_id)
+    await state.update_data(
+        **({"panel_message_id": panel_message_id} if panel_message_id is not None else {}),
+        reply_keyboard_visible=True,
+    )
     try:
         await message.delete()
     except TelegramBadRequest:
@@ -840,6 +858,7 @@ async def main_button_handler(message: Message, state: FSMContext, bot: Bot) -> 
             except TelegramBadRequest:
                 pass
         await state.clear()
+        await state.update_data(reply_keyboard_visible=True)
         _, roles = await _current_user(message)
         await message.answer(
             "به منوی اصلی برگشتی.",
