@@ -15,6 +15,7 @@ from sqlalchemy import (
     Time,
     UniqueConstraint,
     func,
+    text,
 )
 from sqlalchemy.orm import Mapped, mapped_column, relationship
 
@@ -68,7 +69,15 @@ class SchoolMembership(TimestampMixin, Base):
 
 class AcademicYear(TimestampMixin, Base):
     __tablename__ = "academic_years"
-    __table_args__ = (UniqueConstraint("school_id", "name", name="uq_school_academic_year"),)
+    __table_args__ = (
+        UniqueConstraint("school_id", "name", name="uq_school_academic_year"),
+        Index(
+            "uq_one_current_academic_year_per_school",
+            "school_id",
+            unique=True,
+            postgresql_where=text("is_current = true"),
+        ),
+    )
 
     id: Mapped[int] = mapped_column(Integer, primary_key=True)
     school_id: Mapped[int] = mapped_column(ForeignKey("schools.id", ondelete="CASCADE"), index=True)
@@ -164,7 +173,7 @@ class LessonSession(TimestampMixin, Base):
 
 class DailyReport(TimestampMixin, Base):
     __tablename__ = "daily_reports"
-    __table_args__ = (UniqueConstraint("class_id", "report_date", name="uq_daily_report_class_date"),)
+    __table_args__ = (Index("ix_daily_report_class_date", "class_id", "report_date"),)
 
     id: Mapped[int] = mapped_column(Integer, primary_key=True)
     class_id: Mapped[int] = mapped_column(ForeignKey("classes.id", ondelete="CASCADE"), index=True)
