@@ -18,6 +18,7 @@ from classmate.db.models import (
     School,
     Subject,
     TimetableEntry,
+    User,
 )
 from classmate.domain.dates import persian_weekday
 
@@ -281,6 +282,29 @@ async def audit(
             entity_id=entity_id,
             before_data=before_data,
             after_data=after_data,
+        )
+    )
+
+
+async def get_record_submitter_telegram_id(
+    session: AsyncSession,
+    entity_type: str,
+    entity_id: int,
+    class_id: int,
+) -> int | None:
+    """Find a submitter who has opened a private chat with the bot."""
+    model_map = {"homework": Homework, "exam": Exam, "report": DailyReport}
+    model = model_map.get(entity_type)
+    if model is None:
+        return None
+    return await session.scalar(
+        select(User.telegram_id)
+        .join(model, model.created_by == User.id)
+        .where(
+            model.id == entity_id,
+            model.class_id == class_id,
+            User.is_active.is_(True),
+            User.private_chat_started.is_(True),
         )
     )
 
