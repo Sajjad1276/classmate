@@ -60,7 +60,7 @@ async def list_accessible_classes(
         .join(AcademicYear, AcademicYear.id == ClassGroup.academic_year_id)
         .where(
             ClassGroup.is_active.is_(True),
-            SchoolAccess := or_(
+            or_(
                 membership_access,
                 school_access,
                 user.is_platform_admin,
