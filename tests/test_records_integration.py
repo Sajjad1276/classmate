@@ -176,11 +176,16 @@ async def test_soft_delete_subject_cascades_to_links_and_can_be_restored(db_sess
     assert subject.deleted_at is not None
     globally_archived_at = subject.deleted_at
 
+    # SQLite may return timezone-naive values for DateTime(timezone=True),
+    # so compare the UTC wall-clock representation rather than tzinfo metadata.
+    def same_utc_instant(left, right):
+        return left.replace(tzinfo=None) == right.replace(tzinfo=None)
+
     # Global archive touches only the still-active rows; earlier class-level removals stay intact.
-    assert first_link.deleted_at == class_level_deleted_at
-    assert first_entry.deleted_at == class_level_deleted_at
-    assert second_link.deleted_at == globally_archived_at
-    assert second_entry.deleted_at == globally_archived_at
+    assert same_utc_instant(first_link.deleted_at, class_level_deleted_at)
+    assert same_utc_instant(first_entry.deleted_at, class_level_deleted_at)
+    assert same_utc_instant(second_link.deleted_at, globally_archived_at)
+    assert same_utc_instant(second_entry.deleted_at, globally_archived_at)
     assert await get_subject(db_session, class_group.id, school.id, "Mathematics") is None
     assert await get_subject(db_session, second_class.id, school.id, "Mathematics") is None
 
