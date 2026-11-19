@@ -19,6 +19,7 @@ from sqlalchemy import select
 from classmate.bot.handlers import (
     WEEKDAYS,
     _classes_for_user,
+    _ensure_group_member,
     _format_exams,
     _format_homework,
     _parse_pipe_args,
@@ -71,6 +72,7 @@ router = Router(name="classmate_panels")
 
 MAIN_BUTTONS = {
     "🏫 کلاس‌های من",
+    "🔑 عضویت در کلاس",
     "➕ ثبت اطلاعات",
     "📚 تکالیف",
     "📝 امتحانات",
@@ -585,6 +587,7 @@ async def _show_form(
 ) -> None:
     user, roles = await _current_user(callback)
     prompts = {
+        "join": "کد دعوت کلاس را وارد کن.",
         "school_new": (
             "نام مدرسه | سال تحصیلی | منطقه زمانی\n"
             "نمونه: دبیرستان نمونه | ۱۴۰۵-۱۴۰۶ | Asia/Tehran"
@@ -603,6 +606,7 @@ async def _show_form(
         ),
     }
     permitted = {
+        "join": True,
         "school_new": roles["platform"],
         "school_admin_add": roles["platform"],
         "year_new": roles["school"],
@@ -696,11 +700,31 @@ async def main_button_handler(message: Message, state: FSMContext, bot: Bot) -> 
     if label == "❌ لغو عملیات":
         await message.answer("عملیات جاری لغو شد. اطلاعات ناقص ذخیره نشده است.")
         return
+    if label == "🔑 عضویت در کلاس":
+        await state.set_state(PanelInput.input)
+        await state.update_data(panel_form="join", panel_class_id=None)
+        await _render_from_message(
+            message, state, bot,
+            "🔑 کد دعوت کلاس را وارد کن. این کد را از مدیر کلاس دریافت کن.",
+            _markup([[_button("لغو", "ui:cancel_input")]]),
+        )
+        return
     if label == "🏫 کلاس‌های من":
-        await _render_from_message(message, state, bot, "کلاس‌های قابل‌دسترسی:", _markup([
-            [_button(f"🏫 {name[:48]}", f"ui:class:{class_id}")]
-            for class_id, name in await _get_classes(message.from_user)
-        ]))
+        classes = await _get_classes(message.from_user)
+        if not classes:
+            await _render_from_message(
+                message, state, bot,
+                "هنوز عضو هیچ کلاسی نیستی. دکمه «🔑 عضویت در کلاس» را بزن و کد دعوت را وارد کن.",
+                _markup([]),
+            )
+        else:
+            await _render_from_message(
+                message, state, bot, "کلاس‌های قابل‌دسترسی:",
+                _markup([
+                    [_button(f"🏫 {name[:48]}", f"ui:class:{class_id}")]
+                    for class_id, name in classes
+                ]),
+            )
         return
     if label == "➕ ثبت اطلاعات":
         rows = [
@@ -929,7 +953,21 @@ async def _handle_panel_input(message: Message, state: FSMContext, bot: Bot) -> 
                 actor = await _user(session, message.from_user, private=True)
                 result_text = ""
                 parent = _parent_for_form(form_name, class_id)
-                if form_name == "school_new":
+                if form_name == "join":
+                    code = raw.strip()
+                    from datetime import timezone
+                    class_group = await session.scalar(
+                        select(ClassGroup).where(
+                            ClassGroup.member_join_code_hash == hash_code(code),
+                            ClassGroup.member_join_code_expires_at > datetime.now(timezone.utc),
+                            ClassGroup.is_active.is_(True),
+                        )
+                    )
+                    if class_group is None:
+                        raise ValueError("کد دعوت معتبر نیست یا اعتبار آن تمام شده است.")
+                    await _ensure_group_member(session, actor, class_group.id)
+                    result_text = f"✅ به کلاس «{escape(class_group.name)}» متصل شدی."
+                elif form_name == "school_new":
                     values = [part.strip() for part in raw.split("|")]
                     if len(values) not in {2, 3} or not values[0] or not values[1]:
                         raise ValueError("قالب: نام مدرسه | سال تحصیلی | منطقه زمانی")
