@@ -1320,7 +1320,7 @@ async def cancel_record_command(message: Message):
             if not await can_approve(session, user, class_group.id):
                 await message.answer("برای لغو اطلاعات تأییدشده مجوز نداری.")
                 return
-            success, response = await cancel_approved_record(
+            _, response = await cancel_approved_record(
                 session, entity_type, int(entity_id_raw), user.id,
                 school.id, class_group.id,
             )
@@ -1501,7 +1501,6 @@ async def timetable_set_command(message: Message):
                     TimetableEntry.class_id == class_group.id,
                     TimetableEntry.weekday == weekday,
                     TimetableEntry.period == period,
-                    TimetableEntry.deleted_at.is_(None),
                 )
             )
             if entry is None:
@@ -1512,6 +1511,7 @@ async def timetable_set_command(message: Message):
                 session.add(entry)
                 await session.flush()
             else:
+                entry.deleted_at = None
                 entry.subject_id = subject.id
                 entry.starts_at = starts_at
                 entry.ends_at = ends_at
