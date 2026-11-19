@@ -16,4 +16,7 @@ def upgrade() -> None:
 
 
 def downgrade() -> None:
-    Base.metadata.drop_all(bind=op.get_bind())
+    raise RuntimeError(
+        "The initial schema cannot be downgraded automatically because this would drop all ClassMate data. "
+        "Restore a database backup or create an explicit, reviewed data migration."
+    )
