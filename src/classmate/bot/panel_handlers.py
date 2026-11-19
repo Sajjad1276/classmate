@@ -1205,7 +1205,7 @@ async def _show_cancelable_records(
     rows = []
     lines = ["🚫 <b>لغو اطلاعات تأییدشده</b>", "رکورد را انتخاب کن؛ قبل از لغو، تأیید جداگانه می‌گیری."]
     if notice:
-        lines.append(f"\\n{escape(notice)}")
+        lines.append(f"\n{escape(notice)}")
     for homework, subject in homework_rows[:8]:
         rows.append([
             _button(
@@ -1221,15 +1221,15 @@ async def _show_cancelable_records(
             )
         ])
     if not rows:
-        lines.append("\\nمورد تأییدشدهٔ فعالی برای لغو وجود ندارد.")
+        lines.append("\nمورد تأییدشدهٔ فعالی برای لغو وجود ندارد.")
     else:
-        lines.append("\\nتکلیف و امتحان‌های آینده در فهرست زیر هستند.")
+        lines.append("\nتکلیف و امتحان‌های آینده در فهرست زیر هستند.")
     if len(homework_rows) > 8 or len(exam_rows) > 8:
-        lines.append("\\nفقط ۸ مورد از هر دسته نمایش داده شده است.")
+        lines.append("\nفقط ۸ مورد از هر دسته نمایش داده شده است.")
     await _render_from_callback(
         callback,
         state,
-        "\\n".join(lines),
+        "\n".join(lines),
         _markup(rows, f"ui:manage:{class_id}"),
     )
 
@@ -1270,9 +1270,9 @@ async def cancel_record_confirm(callback: CallbackQuery, state: FSMContext):
     await _render_from_callback(
         callback,
         state,
-        f"⚠️ <b>تأیید لغو {label}</b>\\n"
+        f"⚠️ <b>تأیید لغو {label}</b>\n"
         "این رکورد حذف نمی‌شود و در تاریخچه می‌ماند، اما از فهرست فعال کنار می‌رود "
-        "و یادآوری‌های ارسال‌نشدهٔ آن لغو می‌شوند.\\n\\n"
+        "و یادآوری‌های ارسال‌نشدهٔ آن لغو می‌شوند.\n\n"
         "این عملیات قابل بازگردانی از پنل نیست.",
         _markup(rows, f"ui:manage:{class_id}"),
     )
