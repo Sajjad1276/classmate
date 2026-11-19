@@ -431,7 +431,7 @@ async def list_homework(
             Subject.deleted_at.is_(None),
         )
         .order_by(Homework.due_on.asc().nullslast(), Homework.created_at.desc())
-        .limit(30)
+        .limit(31)
     )
     if subject_name:
         query = query.where(Subject.normalized_name == normalize_subject_name(subject_name))
