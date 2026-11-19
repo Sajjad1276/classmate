@@ -28,6 +28,7 @@ from classmate.bot.handlers import (
 )
 from classmate.bot.keyboards import main_reply_keyboard
 from classmate.bot.states import PanelInput
+from classmate.domain.enums import Role
 from classmate.core.config import get_settings
 from classmate.db.models import (
     AcademicYear,
@@ -203,7 +204,7 @@ async def _current_user(message_or_callback, private: bool = True):
                 await session.scalar(
                     select(SchoolMembership.id).where(
                         SchoolMembership.user_id == user.id,
-                        SchoolMembership.role == "school_admin",
+                        SchoolMembership.role == Role.SCHOOL_ADMIN,
                         SchoolMembership.is_active.is_(True),
                     )
                 )
@@ -219,8 +220,8 @@ async def _current_user(message_or_callback, private: bool = True):
                 ).all()
             )
             roles = set(memberships)
-            class_manager = "class_manager" in roles
-            approver = school_admin or class_manager or "trusted_approver" in roles
+            class_manager = Role.CLASS_MANAGER in roles
+            approver = school_admin or class_manager or Role.TRUSTED_APPROVER in roles
             return user, {
                 "platform": bool(user.is_platform_admin),
                 "school": bool(school_admin),
@@ -332,7 +333,7 @@ async def _class_context(class_id: int, tg_user):
                     ClassMembership.is_active.is_(True),
                 )
             )
-            is_manager = bool(membership and membership.role == "class_manager")
+            is_manager = bool(membership and membership.role == Role.CLASS_MANAGER)
             is_approver = await can_approve(session, user, class_id)
             is_school = await is_school_admin(session, user, school.id)
             return {
@@ -344,7 +345,7 @@ async def _class_context(class_id: int, tg_user):
                 "is_approver": is_approver,
                 "is_school_admin": is_school,
                 "is_platform_admin": user.is_platform_admin,
-                "role": membership.role if membership else "school_admin",
+                "role": membership.role if membership else Role.SCHOOL_ADMIN,
             }
 
 
@@ -703,7 +704,7 @@ async def _create_class_codes(callback: CallbackQuery, state: FSMContext, class_
                 select(ClassMembership.id).where(
                     ClassMembership.class_id == class_id,
                     ClassMembership.user_id == user.id,
-                    ClassMembership.role == "class_manager",
+                    ClassMembership.role == Role.CLASS_MANAGER,
                     ClassMembership.is_active.is_(True),
                 )
             )
@@ -1109,7 +1110,7 @@ async def _handle_panel_input(message: Message, state: FSMContext, bot: Bot) -> 
                         SchoolMembership(
                             school_id=school.id,
                             user_id=actor.id,
-                            role="school_admin",
+                            role=Role.SCHOOL_ADMIN,
                         )
                     )
                     await session.flush()
@@ -1138,9 +1139,9 @@ async def _handle_panel_input(message: Message, state: FSMContext, bot: Bot) -> 
                         )
                     )
                     if membership is None:
-                        session.add(SchoolMembership(school_id=school_id, user_id=target.id, role="school_admin"))
+                        session.add(SchoolMembership(school_id=school_id, user_id=target.id, role=Role.SCHOOL_ADMIN))
                     else:
-                        membership.role = "school_admin"
+                        membership.role = Role.SCHOOL_ADMIN
                         membership.is_active = True
                     result_text = "✅ مدیر مدرسه تعیین شد."
                 elif form_name == "year_new":
@@ -1195,7 +1196,7 @@ async def _handle_panel_input(message: Message, state: FSMContext, bot: Bot) -> 
                     )
                     session.add(item)
                     await session.flush()
-                    session.add(ClassMembership(class_id=item.id, user_id=actor.id, role="class_manager"))
+                    session.add(ClassMembership(class_id=item.id, user_id=actor.id, role=Role.CLASS_MANAGER))
                     result_text = f"✅ کلاس ایجاد شد. شناسه کلاس: <code>{item.id}</code>"
                 elif form_name == "class_manager_add":
                     class_raw, telegram_raw = _parse_pipe_args(raw, 2)
@@ -1213,9 +1214,9 @@ async def _handle_panel_input(message: Message, state: FSMContext, bot: Bot) -> 
                         )
                     )
                     if membership is None:
-                        session.add(ClassMembership(class_id=target_class_id, user_id=target.id, role="class_manager"))
+                        session.add(ClassMembership(class_id=target_class_id, user_id=target.id, role=Role.CLASS_MANAGER))
                     else:
-                        membership.role = "class_manager"
+                        membership.role = Role.CLASS_MANAGER
                         membership.is_active = True
                     result_text = "✅ مدیر کلاس تعیین شد."
                 elif form_name == "approver_add":
@@ -1229,7 +1230,7 @@ async def _handle_panel_input(message: Message, state: FSMContext, bot: Bot) -> 
                         select(ClassMembership.id).where(
                             ClassMembership.class_id == class_id,
                             ClassMembership.user_id == actor.id,
-                            ClassMembership.role == "class_manager",
+                            ClassMembership.role == Role.CLASS_MANAGER,
                             ClassMembership.is_active.is_(True),
                         )
                     )
@@ -1246,9 +1247,9 @@ async def _handle_panel_input(message: Message, state: FSMContext, bot: Bot) -> 
                         )
                     )
                     if membership is None:
-                        session.add(ClassMembership(class_id=class_id, user_id=target.id, role="trusted_approver"))
+                        session.add(ClassMembership(class_id=class_id, user_id=target.id, role=Role.TRUSTED_APPROVER))
                     else:
-                        membership.role = "trusted_approver"
+                        membership.role = Role.TRUSTED_APPROVER
                         membership.is_active = True
                     result_text = "✅ فرد مورد اعتماد به این کلاس اضافه شد."
                 elif form_name == "subject_add":
@@ -1262,7 +1263,7 @@ async def _handle_panel_input(message: Message, state: FSMContext, bot: Bot) -> 
                         select(ClassMembership.id).where(
                             ClassMembership.class_id == class_id,
                             ClassMembership.user_id == actor.id,
-                            ClassMembership.role.in_(["class_manager", "trusted_approver"]),
+                            ClassMembership.role.in_([Role.CLASS_MANAGER, Role.TRUSTED_APPROVER]),
                             ClassMembership.is_active.is_(True),
                         )
                     )
@@ -1299,7 +1300,7 @@ async def _handle_panel_input(message: Message, state: FSMContext, bot: Bot) -> 
                         select(ClassMembership.id).where(
                             ClassMembership.class_id == class_id,
                             ClassMembership.user_id == actor.id,
-                            ClassMembership.role == "class_manager",
+                            ClassMembership.role == Role.CLASS_MANAGER,
                             ClassMembership.is_active.is_(True),
                         )
                     )
@@ -1323,6 +1324,7 @@ async def _handle_panel_input(message: Message, state: FSMContext, bot: Bot) -> 
                         session.add(entry)
                         await session.flush()
                     else:
+                        entry.deleted_at = None
                         entry.subject_id = subject.id
                         entry.starts_at = starts_at
                         entry.ends_at = ends_at
