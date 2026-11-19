@@ -139,39 +139,67 @@ async def test_revision_requested_is_not_an_unreachable_reject_state(db_session)
 @pytest.mark.asyncio
 async def test_soft_delete_subject_cascades_to_links_and_can_be_restored(db_session):
     school, class_group, creator, approver, subject = await _seed_class(db_session)
-    entry = TimetableEntry(
+    first_entry = TimetableEntry(
         class_id=class_group.id, subject_id=subject.id, weekday=0,
         period=1, starts_at=time(8, 0), ends_at=time(8, 45),
     )
-    db_session.add(entry)
+    db_session.add(first_entry)
     await db_session.flush()
 
-    # A class-level removal predates the global archive and must remain removed afterwards.
+    # One class link is removed before the school-wide archive.
     assert await soft_delete_class_subject(db_session, class_group.id, subject.id)
-    link = await db_session.scalar(
-        select(ClassSubject).where(ClassSubject.subject_id == subject.id)
+    first_link = await db_session.scalar(
+        select(ClassSubject).where(ClassSubject.class_id == class_group.id)
     )
-    class_level_deleted_at = link.deleted_at
+    class_level_deleted_at = first_link.deleted_at
     assert class_level_deleted_at is not None
+    assert first_entry.deleted_at is not None
 
-    # Restore this class link to prepare one active link for the global archive.
-    link.deleted_at = None
+    # A second class still has an active link and timetable slot for the same shared subject.
+    second_class = ClassGroup(
+        academic_year_id=class_group.academic_year_id,
+        name="Class 10B",
+        grade="10",
+        section="B",
+    )
+    db_session.add(second_class)
     await db_session.flush()
+    second_link = ClassSubject(class_id=second_class.id, subject_id=subject.id)
+    second_entry = TimetableEntry(
+        class_id=second_class.id, subject_id=subject.id, weekday=1,
+        period=2, starts_at=time(9, 0), ends_at=time(9, 45),
+    )
+    db_session.add_all([second_link, second_entry])
+    await db_session.flush()
+
     assert await soft_delete_subject(db_session, subject.id)
     assert subject.deleted_at is not None
     globally_archived_at = subject.deleted_at
-    assert link.deleted_at == globally_archived_at
-    assert entry.deleted_at == globally_archived_at
+
+    # Global archive touches only the still-active rows; earlier class-level removals stay intact.
+    assert first_link.deleted_at == class_level_deleted_at
+    assert first_entry.deleted_at == class_level_deleted_at
+    assert second_link.deleted_at == globally_archived_at
+    assert second_entry.deleted_at == globally_archived_at
     assert await get_subject(db_session, class_group.id, school.id, "Mathematics") is None
+    assert await get_subject(db_session, second_class.id, school.id, "Mathematics") is None
 
     with pytest.raises(ValueError, match="آرشیو شده"):
-        await add_subject(db_session, class_group.id, school.id, "Mathematics")
+        await add_subject(db_session, second_class.id, school.id, "Mathematics")
 
     assert await restore_subject(db_session, subject.id)
     assert subject.deleted_at is None
-    assert link.deleted_at is None
-    assert entry.deleted_at is None
-    assert await get_subject(db_session, class_group.id, school.id, "Mathematics") is subject
+    assert first_link.deleted_at == class_level_deleted_at
+    assert first_entry.deleted_at == class_level_deleted_at
+    assert second_link.deleted_at is None
+    assert second_entry.deleted_at is None
+    assert await get_subject(db_session, class_group.id, school.id, "Mathematics") is None
+    assert await get_subject(db_session, second_class.id, school.id, "Mathematics") is subject
+
+    # A class manager can re-add the subject only after an administrator restores it globally.
+    restored = await add_subject(db_session, class_group.id, school.id, "Mathematics")
+    assert restored.id == subject.id
+    assert first_link.deleted_at is None
 
 
 @pytest.mark.asyncio
