@@ -37,6 +37,9 @@ from classmate.db.models import (
     ClassGroup,
     ClassMembership,
     ClassSubject,
+    Exam,
+    Homework,
+    ReminderJob,
     School,
     SchoolMembership,
     NotificationPreference,
@@ -51,6 +54,7 @@ from classmate.domain.dates import (
     parse_school_date,
     parse_school_datetime,
 )
+from classmate.services.notifications import schedule_approved_record_reminders
 from classmate.services.permissions import (
     can_approve,
     ensure_user,
@@ -716,12 +720,19 @@ async def reminder_preference_set(callback: CallbackQuery):
     if callback.message.chat.type != "private":
         await callback.answer("تنظیم یادآوری فقط در خصوصی قابل تغییر است.", show_alert=True)
         return
+
     async with SessionFactory() as session:
         async with session.begin():
             user = await _user(session, callback.from_user, private=True)
             if not await user_can_access_class(session, user, class_id):
                 await callback.answer("به این کلاس دسترسی نداری.", show_alert=True)
                 return
+            class_context = await get_class_with_school(session, class_id)
+            if class_context is None:
+                await callback.answer("کلاس فعال پیدا نشد.", show_alert=True)
+                return
+            class_group, _, school = class_context
+
             values = {
                 "user_id": user.id,
                 "class_id": class_id,
@@ -737,6 +748,60 @@ async def reminder_preference_set(callback: CallbackQuery):
                 set_=update_values,
             )
             await session.execute(statement)
+
+            if not enabled:
+                categories = ["homework"] if category == "homework" else ["exam"]
+                jobs = (
+                    await session.execute(
+                        select(ReminderJob)
+                        .where(
+                            ReminderJob.class_id == class_id,
+                            ReminderJob.target_type == "private",
+                            ReminderJob.target_id == user.telegram_id,
+                            ReminderJob.entity_type.in_(categories),
+                            ReminderJob.status.in_(["pending", "retry", "processing"]),
+                        )
+                        .with_for_update(skip_locked=True)
+                    )
+                ).scalars().all()
+                for job in jobs:
+                    job.status = "cancelled"
+                    job.locked_at = None
+            else:
+                now_utc = datetime.now(timezone.utc)
+                if category == "homework":
+                    upcoming = (
+                        await session.scalars(
+                            select(Homework).where(
+                                Homework.class_id == class_id,
+                                Homework.status == "APPROVED",
+                                Homework.due_on >= datetime.now(ZoneInfo(school.timezone)).date(),
+                            )
+                        )
+                    ).all()
+                    entity_type = "homework"
+                else:
+                    upcoming = (
+                        await session.scalars(
+                            select(Exam).where(
+                                Exam.class_id == class_id,
+                                Exam.status == "APPROVED",
+                                Exam.scheduled_at >= now_utc,
+                            )
+                        )
+                    ).all()
+                    entity_type = "exam"
+                for record in upcoming:
+                    await schedule_approved_record_reminders(
+                        session,
+                        class_group,
+                        record,
+                        entity_type,
+                        school.timezone,
+                        target_user_id=user.id,
+                        include_group=False,
+                    )
+
     await _show_reminder_preferences(callback, class_id)
 
 
