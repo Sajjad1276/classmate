@@ -1,102 +1,103 @@
-from aiogram.types import (
-    InlineKeyboardButton,
-    InlineKeyboardMarkup,
-    KeyboardButton,
-    ReplyKeyboardMarkup,
-)
+from aiogram.types import InlineKeyboardButton, InlineKeyboardMarkup
 
 from classmate.db.models import ClassGroup, Subject
 
 
+def button(text: str, callback: str) -> InlineKeyboardButton:
+    return InlineKeyboardButton(text=text, callback_data=callback)
+
+
+def menu(rows: list[list[InlineKeyboardButton]], back: str | None = "v2:home"):
+    keyboard = list(rows)
+    if back is not None:
+        keyboard.append([button("⬅️ بازگشت", back)])
+    return InlineKeyboardMarkup(inline_keyboard=keyboard)
+
+
 def main_keyboard(*, platform_admin: bool, school_admin: bool, class_manager: bool, approver: bool):
     rows = [
-        [KeyboardButton(text="🏫 کلاس‌های من"), KeyboardButton(text="🔑 عضویت در کلاس")],
-        [KeyboardButton(text="➕ ثبت اطلاعات")],
-        [KeyboardButton(text="📚 تکالیف"), KeyboardButton(text="📝 امتحانات")],
-        [KeyboardButton(text="📅 برنامه هفتگی"), KeyboardButton(text="🗒 امروز")],
-        [KeyboardButton(text="🔔 یادآوری"), KeyboardButton(text="🔎 جست‌وجو")],
-        [KeyboardButton(text="ℹ️ راهنما")],
+        [button("🏫 کلاس‌های من", "v2:classes:open")],
+        [button("➕ ثبت اطلاعات", "v2:classes:new")],
+        [button("📚 تکالیف", "v2:classes:homework"), button("📝 امتحانات", "v2:classes:exams")],
+        [button("📅 برنامه هفتگی", "v2:classes:week"), button("🗒 امروز", "v2:classes:today")],
+        [button("🔔 یادآوری", "v2:classes:reminders"), button("🔎 جست‌وجو", "v2:classes:search")],
     ]
     if approver:
-        rows.append([KeyboardButton(text="🕓 صف بررسی")])
+        rows.append([button("🕓 صف بررسی", "v2:classes:pending")])
     if class_manager:
-        rows.append([KeyboardButton(text="⚙️ مدیریت کلاس")])
+        rows.append([button("⚙️ مدیریت کلاس", "v2:classes:manage")])
     if school_admin:
-        rows.append([KeyboardButton(text="🏢 مدیریت مدرسه")])
+        rows.append([button("🏢 مدیریت مدرسه", "v2:schools:manage")])
     if platform_admin:
-        rows.append([KeyboardButton(text="🛡 مدیر کل")])
-    return ReplyKeyboardMarkup(
-        keyboard=rows,
-        resize_keyboard=True,
-        is_persistent=True,
-        input_field_placeholder="از منو استفاده کن",
-    )
+        rows.append([button("🛡 پنل مدیر کل", "v2:platform")])
+    return menu(rows, back=None)
 
 
-def inline_menu(
-    rows: list[list[InlineKeyboardButton]], back: str = "v2:home"
-) -> InlineKeyboardMarkup:
-    rows = [*rows, [InlineKeyboardButton(text="⬅️ بازگشت", callback_data=back)]]
-    return InlineKeyboardMarkup(inline_keyboard=rows)
-
-
-def classes_menu(items: list[ClassGroup], action: str) -> InlineKeyboardMarkup:
-    rows = [
-        [_button(f"🏫 {item.name[:42]}", f"v2:class:{action}:{item.id}")]
+def classes_menu(items: list[ClassGroup], action: str):
+    return menu([
+        [button(f"🏫 {item.name[:42]}", f"v2:class:{action}:{item.id}")]
         for item in items
-    ]
-    return inline_menu(rows)
+    ])
 
 
-def subjects_menu(items: list[Subject], action: str, class_id: int) -> InlineKeyboardMarkup:
+def class_dashboard(
+    class_id: int,
+    *,
+    can_review: bool,
+    can_manage: bool,
+):
     rows = [
-        [_button(item.name[:50], f"v2:subject:{action}:{class_id}:{item.id}")]
-        for item in items
+        [button("➕ ثبت تکلیف، امتحان یا گزارش", f"v2:new:{class_id}")],
+        [button("📚 تکالیف", f"v2:action:homework:{class_id}"),
+         button("📝 امتحانات", f"v2:action:exams:{class_id}")],
+        [button("📅 برنامه هفتگی", f"v2:action:week:{class_id}"),
+         button("🗒 خلاصه امروز", f"v2:action:today:{class_id}")],
+        [button("🔔 یادآوری‌های من", f"v2:action:reminders:{class_id}"),
+         button("🔎 جست‌وجو", f"v2:action:search:{class_id}")],
     ]
-    return inline_menu(rows, back=f"v2:class:open:{class_id}")
+    if can_review:
+        rows.append([button("🕓 صف بررسی", f"v2:action:pending:{class_id}")])
+    if can_manage:
+        rows.append([button("⚙️ مدیریت کلاس", f"v2:action:manage:{class_id}")])
+    return menu(rows, back="v2:home")
 
 
-def record_types_menu(class_id: int) -> InlineKeyboardMarkup:
-    return inline_menu(
-        [
-            [_button("📚 تکلیف", f"v2:record:homework:{class_id}")],
-            [_button("📝 امتحان", f"v2:record:exam:{class_id}")],
-            [_button("🗒 گزارش روزانه", f"v2:record:report:{class_id}")],
-        ],
-        back=f"v2:class:open:{class_id}",
-    )
+def record_types(class_id: int):
+    return menu([
+        [button("📚 تکلیف", f"v2:record:homework:{class_id}")],
+        [button("📝 امتحان", f"v2:record:exam:{class_id}")],
+        [button("🗒 گزارش روزانه", f"v2:record:report:{class_id}")],
+    ], back=f"v2:class:open:{class_id}")
 
 
-def approval_menu(class_id: int, record_type: str, record_id: int) -> InlineKeyboardMarkup:
+def subject_picker(subjects: list[Subject], record_type: str, class_id: int):
+    return menu([
+        [button(item.name[:50], f"v2:subject:{record_type}:{class_id}:{item.id}")]
+        for item in subjects
+    ], back=f"v2:class:open:{class_id}")
+
+
+def approval_buttons(class_id: int, record_type: str, record_id: int):
+    return [
+        button("✅ تأیید", f"v2:review:approve:{record_type}:{class_id}:{record_id}"),
+        button("❌ رد", f"v2:review:reject:{record_type}:{class_id}:{record_id}"),
+    ]
+
+
+def reminder_preferences(class_id: int, homework: bool, exams: bool):
+    return menu([
+        [button(f"{'🟢' if homework else '⚫'} یادآوری تکلیف", f"v2:reminder:homework:{class_id}:{int(not homework)}")],
+        [button(f"{'🟢' if exams else '⚫'} یادآوری امتحان", f"v2:reminder:exams:{class_id}:{int(not exams)}")],
+    ], back=f"v2:class:open:{class_id}")
+
+
+def cancel_form():
     return InlineKeyboardMarkup(
-        inline_keyboard=[
-            [
-                _button("✅ تأیید", f"v2:review:approve:{record_type}:{class_id}:{record_id}"),
-                _button("❌ رد", f"v2:review:reject:{record_type}:{class_id}:{record_id}"),
-            ]
-        ]
+        inline_keyboard=[[button("❌ لغو فرم", "v2:form:cancel")]]
     )
 
 
-def reminder_menu(class_id: int, homework: bool, exams: bool) -> InlineKeyboardMarkup:
-    return inline_menu(
-        [
-            [
-                _button(
-                    f"{'🟢' if homework else '⚫'} تکلیف",
-                    f"v2:reminder:homework:{class_id}:{int(not homework)}",
-                )
-            ],
-            [
-                _button(
-                    f"{'🟢' if exams else '⚫'} امتحان",
-                    f"v2:reminder:exams:{class_id}:{int(not exams)}",
-                )
-            ],
-        ],
-        back=f"v2:class:open:{class_id}",
+def form_navigation(back: str):
+    return InlineKeyboardMarkup(
+        inline_keyboard=[[button("⬅️ بازگشت", back), button("❌ لغو فرم", "v2:form:cancel")]]
     )
-
-
-def _button(text: str, callback_data: str) -> InlineKeyboardButton:
-    return InlineKeyboardButton(text=text, callback_data=callback_data)
