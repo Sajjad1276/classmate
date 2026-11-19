@@ -3,6 +3,7 @@ from html import escape
 from zoneinfo import ZoneInfo
 
 from sqlalchemy import or_, select
+from sqlalchemy.dialects.postgresql import insert as pg_insert
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from classmate.db.models import (
@@ -111,17 +112,21 @@ async def schedule_approved_record_reminders(
                 f"درس: {escape(subject.name) if subject else 'نامشخص'}\n"
                 f"{label}: {escape(entity.title)}"
             )
-            session.add(
-                ReminderJob(
-                    class_id=class_group.id,
-                    entity_type=entity_type,
-                    entity_id=entity.id,
-                    target_type=target_type,
-                    target_id=target_id,
-                    message_text=message,
-                    scheduled_at=scheduled_at,
-                    dedupe_key=dedupe,
-                )
+            statement = pg_insert(ReminderJob).values(
+                class_id=class_group.id,
+                entity_type=entity_type,
+                entity_id=entity.id,
+                target_type=target_type,
+                target_id=target_id,
+                message_text=message,
+                scheduled_at=scheduled_at,
+                dedupe_key=dedupe,
             )
-            created += 1
+            inserted_id = await session.scalar(
+                statement.on_conflict_do_nothing(
+                    constraint="uq_reminder_dedupe_key"
+                ).returning(ReminderJob.id)
+            )
+            if inserted_id is not None:
+                created += 1
     return created
