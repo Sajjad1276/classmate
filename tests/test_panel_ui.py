@@ -1,4 +1,7 @@
-from classmate.bot.panel_handlers import _should_create_panel_message
+from classmate.bot.panel_handlers import (
+    _should_create_panel_message,
+    _should_process_panel_text,
+)
 from classmate.bot.keyboards import (
     group_menu_keyboard,
     main_reply_keyboard,
@@ -119,3 +122,12 @@ def test_reminder_preferences_keyboard_exposes_current_state_and_next_value():
     assert buttons[1].text == "⚫ امتحان‌ها: خاموش"
     assert buttons[1].callback_data == "reminders:set:exams:37:1"
     assert buttons[2].callback_data == "reminders:list"
+
+
+
+def test_pending_input_does_not_consume_commands_or_main_menu_taps():
+    assert not _should_process_panel_text("/start")
+    assert not _should_process_panel_text("🏫 کلاس‌های من")
+    assert not _should_process_panel_text("⬅️ بازگشت")
+    assert _should_process_panel_text("نام درس")
+    assert _should_process_panel_text("۱۴۰۵-۱۴۰۶")
