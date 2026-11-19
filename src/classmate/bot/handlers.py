@@ -210,64 +210,100 @@ async def _pending_message(
             logger.exception("Could not post pending record to class group %s", class_group.id)
 
 
+TELEGRAM_SAFE_TEXT_LIMIT = 3600
+
+
+def _append_bounded(parts: list[str], block: str) -> bool:
+    """Append one complete HTML block only when the encoded message stays bounded."""
+    if len("\\n\\n".join([*parts, block])) > TELEGRAM_SAFE_TEXT_LIMIT:
+        return False
+    parts.append(block)
+    return True
+
+
+def _homework_block(homework, subject, description_limit: int = 160) -> str:
+    due = jalali_date(homework.due_on) if homework.due_on else "نامشخص"
+    description = (homework.description or "")[:description_limit]
+    if homework.description and len(homework.description) > description_limit:
+        description += "…"
+    return (
+        f"• <b>{escape(subject.name[:40])}</b> — {escape(homework.title[:60])}\\n"
+        f"  {escape(description)}\\n  موعد: {due}"
+    )
+
+
+def _exam_block(exam, subject, timezone_name: str, scope_limit: int = 100) -> str:
+    scope = (exam.scope or "اعلام نشده")[:scope_limit]
+    if exam.scope and len(exam.scope) > scope_limit:
+        scope += "…"
+    return (
+        f"• <b>{escape(subject.name[:40])}</b> — {escape(exam.title[:60])}\\n"
+        f"  محدوده: {escape(scope)}\\n"
+        f"  زمان: {jalali_datetime(exam.scheduled_at, timezone_name)}"
+    )
+
+
 def _format_homework(rows) -> str:
     if not rows:
         return "هنوز تکلیف تأییدشده‌ای ثبت نشده است."
-    lines = ["📚 <b>تکالیف تأییدشده</b>"]
-    for homework, subject in rows[:5]:
-        due = jalali_date(homework.due_on) if homework.due_on else "نامشخص"
-        description = (homework.description or "")[:240]
-        if homework.description and len(homework.description) > 240:
-            description += "…"
-        lines.append(
-            f"\n• <b>{escape(subject.name[:60])}</b> — {escape(homework.title[:80])}\n"
-            f"  {escape(description)}\n  موعد: {due}"
-        )
-    if len(rows) > 5:
-        lines.append(f"\nو {len(rows) - 5} تکلیف دیگر…")
-    return "\n".join(lines)
+    parts = ["📚 <b>تکالیف تأییدشده</b>"]
+    omitted = max(0, len(rows) - 8)
+    for homework, subject in rows[:8]:
+        if not _append_bounded(parts, _homework_block(homework, subject)):
+            omitted += 1
+    if omitted:
+        parts.append(f"ℹ️ {omitted} تکلیف دیگر به‌دلیل محدودیت طول پیام نمایش داده نشد.")
+    return "\\n\\n".join(parts)
 
 
 def _format_exams(rows, timezone_name: str) -> str:
     if not rows:
         return "امتحان آینده‌ای ثبت نشده است."
-    lines = ["📝 <b>امتحانات تأییدشده</b>"]
-    for exam, subject in rows[:5]:
-        scope = (exam.scope or "اعلام نشده")[:160]
-        if exam.scope and len(exam.scope) > 160:
-            scope += "…"
-        lines.append(
-            f"\n• <b>{escape(subject.name[:60])}</b> — {escape(exam.title[:80])}\n"
-            f"  محدوده: {escape(scope)}\n"
-            f"  زمان: {jalali_datetime(exam.scheduled_at, timezone_name)}"
-        )
-    if len(rows) > 5:
-        lines.append(f"\nو {len(rows) - 5} امتحان دیگر…")
-    return "\n".join(lines)
+    parts = ["📝 <b>امتحانات تأییدشده</b>"]
+    omitted = max(0, len(rows) - 8)
+    for exam, subject in rows[:8]:
+        if not _append_bounded(parts, _exam_block(exam, subject, timezone_name)):
+            omitted += 1
+    if omitted:
+        parts.append(f"ℹ️ {omitted} امتحان دیگر به‌دلیل محدودیت طول پیام نمایش داده نشد.")
+    return "\\n\\n".join(parts)
 
 
 def _format_daily_summary(reports, homework_rows, exam_rows, local_date, timezone_name: str) -> str:
     parts = [f"🗓 <b>خلاصه امروز — {jalali_date(local_date)}</b>"]
+    omitted = max(0, len(reports) - 3) + max(0, len(homework_rows) - 4) + max(0, len(exam_rows) - 4)
+
     if reports:
         for report in reports[:3]:
-            title = escape((report.title or "گزارش روزانه")[:80])
-            body = report.body[:260]
-            if len(report.body) > 260:
+            title = escape((report.title or "گزارش روزانه")[:60])
+            body = (report.body or "")[:140]
+            if report.body and len(report.body) > 140:
                 body += "…"
-            parts.append(f"🗒 <b>{title}</b>\n{escape(body)}")
+            block = f"🗒 <b>{title}</b>\\n{escape(body)}"
+            if not _append_bounded(parts, block):
+                omitted += 1
     else:
-        parts.append("🗒 گزارش تأییدشده‌ای برای امروز ثبت نشده است.")
+        _append_bounded(parts, "🗒 گزارش تأییدشده‌ای برای امروز ثبت نشده است.")
 
-    parts.append(_format_homework(homework_rows[:4]))
-    parts.append(_format_exams(exam_rows[:4], timezone_name))
-    has_more = (
-        len(reports) > 3
-        or len(homework_rows) > 4
-        or len(exam_rows) > 4
-    )
-    if has_more:
-        parts.append("ℹ️ موارد بیشتری برای امروز وجود دارد که در این خلاصه نمایش داده نشد.")
-    return "\n\n".join(parts)
+    if homework_rows:
+        _append_bounded(parts, "📚 <b>تکالیف موعددار امروز</b>")
+        for homework, subject in homework_rows[:4]:
+            if not _append_bounded(parts, _homework_block(homework, subject, 90)):
+                omitted += 1
+    else:
+        _append_bounded(parts, "📚 امروز تکلیف موعدداری ثبت نشده است.")
+
+    if exam_rows:
+        _append_bounded(parts, "📝 <b>امتحانات امروز</b>")
+        for exam, subject in exam_rows[:4]:
+            if not _append_bounded(parts, _exam_block(exam, subject, timezone_name, 70)):
+                omitted += 1
+    else:
+        _append_bounded(parts, "📝 امروز امتحانی ثبت نشده است.")
+
+    if omitted:
+        parts.append("ℹ️ موارد بیشتری وجود دارد که به‌دلیل محدودیت طول پیام در این خلاصه نمایش داده نشد.")
+    return "\\n\\n".join(parts)
 
 
 def _parse_pipe_args(raw: str, count: int) -> list[str]:
