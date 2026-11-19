@@ -4,7 +4,7 @@ from sqlalchemy import func, select
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from classmate.application.access import require_class_role
-from classmate.db.models import ClassGroup, ClassMembership, School, User
+from classmate.db.models import AcademicYear, ClassGroup, School
 from classmate.domain.enums import Role
 from classmate.domain.errors import Conflict, NotFound
 from classmate.services.permissions import hash_code
@@ -75,15 +75,12 @@ async def get_bound_class(
     row = (
         await session.execute(
             select(ClassGroup, School)
-            .join(School, School.id == School.id)
-            .join(
-                __import__("classmate.db.models", fromlist=["AcademicYear"]).AcademicYear,
-                __import__("classmate.db.models", fromlist=["AcademicYear"]).AcademicYear.id
-                == ClassGroup.academic_year_id,
-            )
+            .join(AcademicYear, AcademicYear.id == ClassGroup.academic_year_id)
+            .join(School, School.id == AcademicYear.school_id)
             .where(
                 ClassGroup.group_chat_id == chat_id,
                 ClassGroup.is_active.is_(True),
+                School.is_active.is_(True),
             )
         )
     ).first()
