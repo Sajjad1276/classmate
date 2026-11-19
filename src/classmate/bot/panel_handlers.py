@@ -792,7 +792,7 @@ async def main_button_handler(message: Message, state: FSMContext, bot: Bot) -> 
         await _render_from_message(
             message, state, bot,
             "🔑 کد دعوت کلاس را وارد کن. این کد را از مدیر کلاس دریافت کن.",
-            _markup([[_button("لغو", "ui:cancel_input")]]),
+            _markup([], "ui:cancel_input"),
         )
         return
     if label == "🏫 کلاس‌های من":
@@ -1088,7 +1088,7 @@ async def _handle_panel_input(message: Message, state: FSMContext, bot: Bot) -> 
                         raise PermissionError("فقط مدیر کل می‌تواند مدرسه ایجاد کند.")
                     timezone_name = get_settings().default_timezone
                     school = School(name=school_name[:180], timezone=timezone_name)
-                    school_group_token = make_code()
+                    school_group_token = f"CM_{make_code()}"
                     school.group_link_token_hash = hash_code(school_group_token)
                     school.group_link_token_expires_at = (
                         datetime.now(timezone.utc) + timedelta(hours=24)
