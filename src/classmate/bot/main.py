@@ -8,6 +8,7 @@ from aiogram.enums import ParseMode
 from classmate.bot.command_menu import setup_command_menu
 from classmate.bot.panel_handlers import router as panel_router
 from classmate.bot.handlers import router
+from classmate.bot.approval_handlers import router as approval_router
 from classmate.bot.middlewares import ProcessedUpdateMiddleware
 from classmate.db.fsm_storage import PostgresFSMStorage
 from classmate.db.session import SessionFactory
@@ -30,6 +31,7 @@ async def main() -> None:
     await setup_command_menu(bot)
     dispatcher = Dispatcher(storage=PostgresFSMStorage(SessionFactory))
     dispatcher.update.outer_middleware(ProcessedUpdateMiddleware(SessionFactory))
+    dispatcher.include_router(approval_router)
     dispatcher.include_router(panel_router)
     dispatcher.include_router(router)
     logging.getLogger(__name__).info("Starting ClassMate bot polling")
