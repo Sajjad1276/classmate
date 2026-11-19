@@ -10,7 +10,7 @@ from classmate.bot.handlers import _class_from_message, _user
 from classmate.bot.keyboards import approval_keyboard
 from classmate.db.models import ReminderJob
 from classmate.db.session import SessionFactory
-from classmate.domain.enums import ENTITY_LABELS, EntityType
+from classmate.domain.enums import ENTITY_LABELS, EntityType, ReminderStatus
 from classmate.services.permissions import can_approve
 from classmate.services.records import (
     approve_record,
@@ -154,7 +154,7 @@ async def reminder_uncertain_command(message: Message):
             rows = (
                 await session.execute(
                     select(ReminderJob)
-                    .where(ReminderJob.status == "uncertain")
+                    .where(ReminderJob.status == ReminderStatus.UNCERTAIN)
                     .order_by(ReminderJob.id.desc())
                     .limit(20)
                 )
@@ -178,7 +178,7 @@ async def reminder_uncertain_command(message: Message):
 @router.message(Command("reminder_resolve"))
 async def reminder_resolve_command(message: Message):
     parts = (message.text or "").split()
-    if len(parts) != 3 or not parts[1].isdigit() or parts[2] not in {"sent", "retry"}:
+    if len(parts) != 3 or not parts[1].isdigit() or parts[2] not in {ReminderStatus.SENT, ReminderStatus.RETRY}:
         await message.answer("قالب: /reminder_resolve شناسه sent|retry")
         return
     async with SessionFactory() as session:
@@ -188,16 +188,16 @@ async def reminder_resolve_command(message: Message):
                 await message.answer("این فرمان فقط برای مدیر کل در دسترس است.")
                 return
             job = await session.get(ReminderJob, int(parts[1]), with_for_update=True)
-            if job is None or job.status != "uncertain":
+            if job is None or job.status != ReminderStatus.UNCERTAIN:
                 await message.answer("یادآوری نامطمئن با این شناسه پیدا نشد.")
                 return
             if parts[2] == "sent":
-                job.status = "sent"
+                job.status = ReminderStatus.SENT
                 job.sent_at = datetime.now(timezone.utc)
                 job.last_error = "Manually reconciled by platform administrator as already delivered."
                 response = "یادآوری به‌عنوان ارسال‌شده ثبت شد و دیگر ارسال نمی‌شود."
             else:
-                job.status = "retry"
+                job.status = ReminderStatus.RETRY
                 job.scheduled_at = datetime.now(timezone.utc)
                 job.locked_at = None
                 job.last_error = "Manually re-queued by platform administrator; duplicate delivery is possible."
