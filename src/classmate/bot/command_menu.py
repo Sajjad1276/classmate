@@ -16,4 +16,4 @@ async def setup_command_menu(bot: Bot) -> None:
         BotCommandScopeAllChatAdministrators(),
     )
     for scope in scopes:
-        await bot.set_my_commands([], scope=scope)
+        await bot.delete_my_commands(scope=scope)
