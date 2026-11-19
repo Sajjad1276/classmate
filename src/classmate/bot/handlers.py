@@ -4,6 +4,7 @@ from html import escape
 from zoneinfo import ZoneInfo
 
 from aiogram import Bot, F, Router
+from aiogram.exceptions import TelegramBadRequest
 from aiogram.filters import Command, CommandStart
 from aiogram.fsm.context import FSMContext
 from aiogram.types import (
@@ -634,13 +635,16 @@ async def _show_reminder_class_selector(callback: CallbackQuery) -> None:
         async with session.begin():
             user = await _user(session, callback.from_user, private=True)
             classes = await _classes_for_user(session, user)
-    if not classes:
-        await callback.message.answer("برای تنظیم یادآوری ابتدا عضو یک کلاس شو.")
-    else:
-        await callback.message.answer(
-            "🔔 <b>تنظیم یادآوری خصوصی</b>\\nکلاس موردنظر را انتخاب کن:",
-            reply_markup=reminder_class_picker(classes),
-        )
+    text = (
+        "برای تنظیم یادآوری ابتدا عضو یک کلاس شو."
+        if not classes
+        else "🔔 <b>تنظیم یادآوری خصوصی</b>\\nکلاس موردنظر را انتخاب کن:"
+    )
+    markup = reminder_class_picker(classes) if classes else None
+    try:
+        await callback.message.edit_text(text, reply_markup=markup)
+    except TelegramBadRequest:
+        await callback.message.answer(text, reply_markup=markup)
     await callback.answer()
 
 
