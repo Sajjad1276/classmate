@@ -761,7 +761,7 @@ async def reminder_preference_set(callback: CallbackQuery):
                             ReminderJob.entity_type.in_(categories),
                             ReminderJob.status.in_(["pending", "retry", "processing"]),
                         )
-                        .with_for_update(skip_locked=True)
+                        .with_for_update()
                     )
                 ).scalars().all()
                 for job in jobs:
