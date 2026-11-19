@@ -50,7 +50,7 @@ Opening an inner panel hides the persistent Reply Keyboard. One Back button clos
 
 ## Group interface status
 
-The private interface is button-driven, and each school can now be linked to one central Telegram group through Telegram's startgroup deep link. Group-side menus, school notifications, class-specific group workflows and group moderation are the next implementation phase. Keep Telegram Privacy Mode enabled; the bot does not read arbitrary group messages.
+The private interface is button-driven. A school can be linked to one central Telegram group, and each class can be linked to its own group using a one-time administrator-issued code. A connected class group now has an inline menu for approved homework, exams, weekly timetable, today's summary, new submissions and (for authorized roles) the review queue. The school-level group remains an announcement/coordination endpoint; richer school-wide announcements, group preference controls and moderation workflows remain follow-up work. Keep Telegram Privacy Mode enabled; the bot does not read arbitrary group messages.
 
 ## Security
 
