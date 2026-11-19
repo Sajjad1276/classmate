@@ -4,6 +4,9 @@ from classmate.db.models import ClassGroup, Subject
 
 
 def button(text: str, callback: str) -> InlineKeyboardButton:
+    """Render-only label; clicking sends callback_data, never the visible text."""
+    if not callback.startswith("v2:"):
+        raise ValueError("V2 buttons must dispatch a namespaced callback.")
     return InlineKeyboardButton(text=text, callback_data=callback)
 
 
