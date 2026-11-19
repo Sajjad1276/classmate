@@ -583,7 +583,7 @@ async def _show_platform_panel(
     rows = [
         [_button("🏫 ایجاد مدرسه و سال تحصیلی", "ui:form:school_new")],
         [_button("👤 تعیین مدیر مدرسه", "ui:school_admin_schools")],
-        [_button("📚 مدیریت مدرسه‌ها و کلاس‌ها", "ui:classes")],
+        [_button("📚 مدیریت مدرسه‌ها و کلاس‌ها", "ui:school")],
     ]
     await _render_from_callback(
         callback,
@@ -1142,7 +1142,6 @@ async def cancel_input(callback: CallbackQuery, state: FSMContext):
         **({"school_name": None} if form_name == "school_new" else {}),
     )
     parent = _parent_for_form(form_name or "", class_id, school_id)
-    await callback.answer("عملیات لغو شد.")
     if parent == "ui:platform":
         await _show_platform_panel(callback, state)
     elif parent == "ui:school":
@@ -1202,7 +1201,11 @@ def _parse_persian_int(value: str) -> int:
         "۰۱۲۳۴۵۶۷۸۹٠١٢٣٤٥٦٧٨٩",
         "01234567890123456789",
     )
-    normalized = value.strip().translate(digit_map).replace(",", "").replace("٬", "")
+    normalized = value.strip().translate(digit_map)
+    for separator in (",", "٬", " ", "\u00a0", "\u202f", "'"):
+        normalized = normalized.replace(separator, "")
+    if not normalized:
+        raise ValueError("عدد واردشده خالی است.")
     return int(normalized)
 
 
@@ -1306,8 +1309,8 @@ async def _handle_panel_input(message: Message, state: FSMContext, bot: Bot) -> 
                         telegram_id = _parse_persian_int(telegram_raw)
                     school = await session.get(School, target_school_id)
                     target = await session.scalar(select(User).where(User.telegram_id == telegram_id))
-                    if not school or not target:
-                        raise ValueError("مدرسه یا کاربر پیدا نشد. کاربر باید ابتدا ربات را Start کرده باشد.")
+                    if not school or not school.is_active or not target:
+                        raise ValueError("مدرسه فعال یا کاربر پیدا نشد. کاربر باید ابتدا ربات را Start کرده باشد.")
                     membership = await session.scalar(
                         select(SchoolMembership).where(
                             SchoolMembership.school_id == target_school_id,
@@ -1329,8 +1332,8 @@ async def _handle_panel_input(message: Message, state: FSMContext, bot: Bot) -> 
                     if not await is_school_admin(session, actor, school_id):
                         raise PermissionError("مجوز مدیریت این مدرسه را نداری.")
                     school = await session.get(School, school_id)
-                    if not school:
-                        raise ValueError("مدرسه پیدا نشد.")
+                    if not school or not school.is_active:
+                        raise ValueError("مدرسه فعال پیدا نشد.")
                     existing = await session.scalar(
                         select(AcademicYear.id).where(
                             AcademicYear.school_id == school_id,
@@ -1359,9 +1362,14 @@ async def _handle_panel_input(message: Message, state: FSMContext, bot: Bot) -> 
                     grade, section, name = _parse_pipe_args(raw, 3)
                     if not grade or not name:
                         raise ValueError("پایه و نام کلاس الزامی هستند.")
+                    if len(grade) > 32 or len(section) > 32 or len(name) > 80:
+                        raise ValueError("حداکثر طول پایه و شعبه ۳۲ و نام کلاس ۸۰ نویسه است.")
                     school = await session.get(School, school_id)
-                    if not school or not await is_school_admin(session, actor, school_id):
-                        raise PermissionError("مدرسه پیدا نشد یا مجوز مدیریت آن را نداری.")
+                    if (
+                        not school or not school.is_active
+                        or not await is_school_admin(session, actor, school_id)
+                    ):
+                        raise PermissionError("مدرسه فعال پیدا نشد یا مجوز مدیریت آن را نداری.")
                     year = await session.scalar(
                         select(AcademicYear).where(
                             AcademicYear.school_id == school_id,
@@ -1374,7 +1382,7 @@ async def _handle_panel_input(message: Message, state: FSMContext, bot: Bot) -> 
                         academic_year_id=year.id,
                         name=name[:80],
                         grade=grade[:32],
-                        section=None if section == "-" else section[:32],
+                        section=None if section in {"", "-"} else section,
                     )
                     session.add(item)
                     await session.flush()
