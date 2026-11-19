@@ -33,7 +33,10 @@ from classmate.db.models import (
     AcademicYear,
     ClassGroup,
     ClassMembership,
+    Exam,
+    Homework,
     NotificationPreference,
+    Subject,
     School,
     SchoolMembership,
     TimetableEntry,
@@ -1262,7 +1265,34 @@ async def cancel_record_confirm(callback: CallbackQuery, state: FSMContext):
     ):
         await callback.answer("مجوز لغو این اطلاعات را نداری.", show_alert=True)
         return
+    model = Homework if entity_type == "homework" else Exam
+    async with SessionFactory() as session:
+        async with session.begin():
+            selected = await session.execute(
+                select(model, Subject)
+                .join(Subject, model.subject_id == Subject.id)
+                .where(
+                    model.id == entity_id,
+                    model.class_id == class_id,
+                    model.status == "APPROVED",
+                )
+            )
+            selected_row = selected.first()
+    if selected_row is None:
+        await callback.answer("این رکورد دیگر فعال یا قابل لغو نیست.", show_alert=True)
+        return
+    record, subject = selected_row
     label = "تکلیف" if entity_type == "homework" else "امتحان"
+    due_line = (
+        f"موعد تحویل: {jalali_date(record.due_on)}"
+        if entity_type == "homework"
+        else f"زمان امتحان: {jalali_datetime(record.scheduled_at, context['school'].timezone)}"
+    )
+    detail = (
+        f"درس: {escape(subject.name)}\n"
+        f"عنوان: {escape(record.title)}\n"
+        f"{due_line}"
+    )
     rows = [[
         _button("بله، لغو شود", f"ui:cancel_do:{entity_type}:{entity_id}:{class_id}"),
         _button("خیر، برگشت", f"ui:cancel_records:{class_id}"),
@@ -1271,6 +1301,7 @@ async def cancel_record_confirm(callback: CallbackQuery, state: FSMContext):
         callback,
         state,
         f"⚠️ <b>تأیید لغو {label}</b>\n"
+        f"{detail}\n\n"
         "این رکورد حذف نمی‌شود و در تاریخچه می‌ماند، اما از فهرست فعال کنار می‌رود "
         "و یادآوری‌های ارسال‌نشدهٔ آن لغو می‌شوند.\n\n"
         "این عملیات قابل بازگردانی از پنل نیست.",
