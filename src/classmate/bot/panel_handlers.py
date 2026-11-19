@@ -483,7 +483,7 @@ async def _show_action(
             message,
             state,
             bot,
-            f"{title}\\n\\n🔔 <b>تنظیم یادآوری‌های خصوصی</b>",
+            f"{title}\n\n🔔 <b>تنظیم یادآوری‌های خصوصی</b>",
             reminder_preferences_keyboard(
                 class_id,
                 homework_enabled=homework_enabled,
