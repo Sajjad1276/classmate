@@ -58,8 +58,10 @@ async def list_accessible_classes(
     query = (
         select(ClassGroup, AcademicYear.name)
         .join(AcademicYear, AcademicYear.id == ClassGroup.academic_year_id)
+        .join(School, School.id == AcademicYear.school_id)
         .where(
             ClassGroup.is_active.is_(True),
+            School.is_active.is_(True),
             or_(
                 membership_access,
                 school_access,
