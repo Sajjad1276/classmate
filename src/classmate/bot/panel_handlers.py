@@ -26,8 +26,9 @@ from classmate.bot.handlers import (
     _format_homework,
     _parse_pipe_args,
     _user,
+    update_user_reminder_preference,
 )
-from classmate.bot.keyboards import main_reply_keyboard
+from classmate.bot.keyboards import main_reply_keyboard, reminder_preferences_keyboard
 from classmate.bot.states import PanelInput
 from classmate.core.config import get_settings
 from classmate.db.models import (
@@ -478,27 +479,16 @@ async def _show_action(
                 )
         homework_enabled = pref.homework_enabled if pref else True
         exams_enabled = pref.exams_enabled if pref else True
-        body = (
-            f"🔔 <b>تنظیم یادآوری‌های خصوصی</b>\n"
-            f"تکالیف: {'فعال ✅' if homework_enabled else 'غیرفعال ⛔'}\n"
-            f"امتحانات: {'فعال ✅' if exams_enabled else 'غیرفعال ⛔'}"
-        )
-        rows = [
-            [
-                _button(
-                    "خاموش‌کردن تکالیف" if homework_enabled else "فعال‌کردن تکالیف",
-                    f"ui:reminder_toggle:{class_id}:homework:{'off' if homework_enabled else 'on'}",
-                )
-            ],
-            [
-                _button(
-                    "خاموش‌کردن امتحانات" if exams_enabled else "فعال‌کردن امتحانات",
-                    f"ui:reminder_toggle:{class_id}:exams:{'off' if exams_enabled else 'on'}",
-                )
-            ],
-        ]
         await _render_from_message(
-            message, state, bot, f"{title}\n\n{body}", _markup(rows, f"ui:class:{class_id}")
+            message,
+            state,
+            bot,
+            f"{title}\\n\\n🔔 <b>تنظیم یادآوری‌های خصوصی</b>",
+            reminder_preferences_keyboard(
+                class_id,
+                homework_enabled=homework_enabled,
+                exams_enabled=exams_enabled,
+            ),
         )
         return
     elif action == "pending":
@@ -1044,8 +1034,14 @@ async def class_action(callback: CallbackQuery, state: FSMContext, bot: Bot):
 
 @router.callback_query(F.data.startswith("ui:reminder_toggle:"))
 async def reminder_toggle(callback: CallbackQuery, state: FSMContext, bot: Bot):
-    _, _, class_id_raw, category, setting = callback.data.split(":")
-    class_id = int(class_id_raw)
+    try:
+        _, _, class_id_raw, category, setting = callback.data.split(":")
+        class_id = int(class_id_raw)
+        if class_id < 1 or category not in {"homework", "exams"} or setting not in {"off", "on"}:
+            raise ValueError
+    except (ValueError, TypeError):
+        await callback.answer("درخواست تنظیم یادآوری نامعتبر است.", show_alert=True)
+        return
     context = await _class_context(class_id, callback.from_user)
     if not context:
         await callback.answer("به این کلاس دسترسی نداری.", show_alert=True)
@@ -1053,23 +1049,16 @@ async def reminder_toggle(callback: CallbackQuery, state: FSMContext, bot: Bot):
     async with SessionFactory() as session:
         async with session.begin():
             user = await _user(session, callback.from_user, private=True)
-            preference = await session.scalar(
-                select(NotificationPreference).where(
-                    NotificationPreference.user_id == user.id,
-                    NotificationPreference.class_id == class_id,
-                )
+            school_context = await get_class_with_school(session, class_id)
+            if not school_context:
+                await callback.answer("کلاس فعال پیدا نشد.", show_alert=True)
+                return
+            class_group, _, school = school_context
+            await update_user_reminder_preference(
+                session, user, class_group, school.timezone, category, setting == "on"
             )
-            if preference is None:
-                preference = NotificationPreference(user_id=user.id, class_id=class_id)
-                session.add(preference)
-            enabled = setting == "on"
-            if category == "homework":
-                preference.homework_enabled = enabled
-            elif category == "exams":
-                preference.exams_enabled = enabled
-    await callback.answer("تنظیم یادآوری ذخیره شد.")
-    # Re-render using a private Message action and the same panel message ID.
     await _show_action(callback.message, state, bot, callback.from_user, "reminders", class_id)
+    await callback.answer("تنظیم یادآوری ذخیره شد.")
 
 
 @router.callback_query(F.data == "ui:platform")
