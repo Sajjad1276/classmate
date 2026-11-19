@@ -110,7 +110,10 @@ def main_reply_keyboard(
 
 def wizard_cancel_keyboard() -> ReplyKeyboardMarkup:
     return ReplyKeyboardMarkup(
-        keyboard=[[KeyboardButton(text="❌ لغو عملیات")]],
+        keyboard=[
+            [KeyboardButton(text="⬅️ بازگشت به منو")],
+            [KeyboardButton(text="❌ لغو عملیات")],
+        ],
         resize_keyboard=True,
         is_persistent=True,
     )
