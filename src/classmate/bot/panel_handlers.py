@@ -431,7 +431,11 @@ async def _show_action(
                         await session.execute(
                             select(TimetableEntry, Subject)
                             .join(Subject, TimetableEntry.subject_id == Subject.id)
-                            .where(TimetableEntry.class_id == class_id)
+                            .where(
+                                TimetableEntry.class_id == class_id,
+                                TimetableEntry.deleted_at.is_(None),
+                                Subject.deleted_at.is_(None),
+                            )
                             .order_by(TimetableEntry.weekday, TimetableEntry.period)
                         )
                     ).all()
