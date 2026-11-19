@@ -5,6 +5,7 @@ from sqlalchemy import (
     BigInteger,
     Boolean,
     Date,
+    JSON,
     DateTime,
     ForeignKey,
     Index,
@@ -302,3 +303,17 @@ class ProcessedUpdate(Base):
     processed_at: Mapped[datetime] = mapped_column(
         DateTime(timezone=True), server_default=func.now(), nullable=False
     )
+
+
+class BotState(Base):
+    """Persistent aiogram FSM state keyed by bot/chat/user/thread."""
+
+    __tablename__ = "bot_states"
+
+    key: Mapped[str] = mapped_column(String(512), primary_key=True)
+    state: Mapped[str | None] = mapped_column(String(160))
+    data: Mapped[dict[str, Any]] = mapped_column(JSON, default=dict, nullable=False)
+    updated_at: Mapped[datetime] = mapped_column(
+        DateTime(timezone=True), server_default=func.now(), onupdate=func.now(), nullable=False
+    )
+    expires_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), nullable=False, index=True)
