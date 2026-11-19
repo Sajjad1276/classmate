@@ -1,7 +1,7 @@
 from __future__ import annotations
 
 import logging
-from datetime import datetime
+from datetime import datetime, time
 from zoneinfo import ZoneInfo
 
 from aiogram import Bot, F, Router
@@ -1045,10 +1045,8 @@ async def cancel_record_confirm_callback(
         _, _, _, kind, class_id_raw, record_id_raw = callback.data.split(":")
         record_type = RecordType(kind)
         class_id, record_id = int(class_id_raw), int(record_id_raw)
-        model = {
-            RecordType.HOMEWORK: Homework,
-            RecordType.EXAM: Exam,
-        }[record_type]
+        if record_type not in {RecordType.HOMEWORK, RecordType.EXAM}:
+            raise ValueError("Only homework and exam records can be cancelled.")
     except (ValueError, TypeError, KeyError):
         await callback.answer("درخواست لغو نامعتبر است.", show_alert=True)
         return
@@ -1124,7 +1122,7 @@ async def cancel_record_execute_callback(
     try:
         async with SessionFactory() as session:
             async with session.begin():
-                record = await cancel_record(
+                await cancel_record(
                     session, user, class_id, record_type, record_id
                 )
                 class_group, _, school = await require_class_access(
@@ -1601,7 +1599,7 @@ async def form_input(message: Message, state: FSMContext, bot: Bot) -> None:
                     )
                     if target is None:
                         raise DomainError("این کاربر هنوز ربات را در گفت‌وگوی خصوصی Start نکرده است.")
-                    membership = await assign_class_manager(
+                    await assign_class_manager(
                         session, user, int(data["class_id"]), target
                     )
             await _finish_flow(
