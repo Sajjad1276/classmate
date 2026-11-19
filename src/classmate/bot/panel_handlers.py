@@ -1,7 +1,7 @@
 from __future__ import annotations
 
 import logging
-from datetime import datetime, time
+from datetime import datetime, time, timedelta, timezone
 from html import escape
 from zoneinfo import ZoneInfo
 
@@ -13,6 +13,7 @@ from aiogram.types import (
     InlineKeyboardButton,
     InlineKeyboardMarkup,
     Message,
+    ReplyKeyboardRemove,
 )
 from sqlalchemy import select
 
@@ -82,8 +83,7 @@ MAIN_BUTTONS = {
     "⚙️ مدیریت کلاس",
     "🏢 مدیریت مدرسه",
     "🛡 پنل مدیر کل",
-    "❌ لغو عملیات",
-    "⬅️ بازگشت به منو",
+    "⬅️ بازگشت",
 }
 
 ACTION_LABELS = {
@@ -133,7 +133,17 @@ async def _render_from_message(
             if "message is not modified" in str(exc).lower():
                 return
             logger.info("Could not edit previous panel message: %s", exc)
-    sent = await bot.send_message(message.chat.id, text, reply_markup=keyboard)
+    sent = await bot.send_message(
+        message.chat.id,
+        text,
+        reply_markup=ReplyKeyboardRemove(),
+    )
+    if keyboard is not None:
+        await bot.edit_message_reply_markup(
+            chat_id=message.chat.id,
+            message_id=sent.message_id,
+            reply_markup=keyboard,
+        )
     await state.update_data(panel_message_id=sent.message_id)
 
 
@@ -164,11 +174,18 @@ async def _close_panel(
             await callback.message.edit_reply_markup(reply_markup=None)
         except TelegramBadRequest:
             pass
-    data = await state.get_data()
-    data.pop("panel_message_id", None)
-    data.pop("panel_form", None)
-    data.pop("panel_class_id", None)
-    await state.set_data(data)
+    await state.clear()
+    _, roles = await _current_user(callback)
+    await callback.bot.send_message(
+        callback.message.chat.id,
+        "منوی اصلی ClassMate",
+        reply_markup=main_reply_keyboard(
+            is_platform_admin=roles["platform"],
+            is_school_admin=roles["school"],
+            is_class_manager=roles["manager"],
+            is_approver=roles["approver"],
+        ),
+    )
     await callback.answer()
 
 
@@ -606,10 +623,7 @@ async def _show_form(
     user, roles = await _current_user(callback)
     prompts = {
         "join": "کد دعوت کلاس را وارد کن.",
-        "school_new": (
-            "نام مدرسه | سال تحصیلی | منطقه زمانی\n"
-            "نمونه: دبیرستان نمونه | ۱۴۰۵-۱۴۰۶ | Asia/Tehran"
-        ),
+        "school_new": "نام مدرسه را وارد کن.",
         "school_admin_add": "شناسه مدرسه | شناسه عددی تلگرام کاربر",
         "year_new": "شناسه مدرسه | نام سال تحصیلی\nنمونه: 1 | ۱۴۰۶-۱۴۰۷",
         "class_new": "شناسه مدرسه | پایه | شعبه | نام کلاس\nبرای نداشتن شعبه، - وارد کن.",
@@ -655,7 +669,7 @@ async def _show_form(
         callback,
         state,
         f"📝 <b>اطلاعات موردنیاز</b>\n{prompts[form_name]}",
-        _markup([[_button("لغو", "ui:cancel_input")]], _parent_for_form(form_name, class_id)),
+        _markup([], "ui:cancel_input"),
     )
 
 
@@ -1010,7 +1024,35 @@ async def _handle_panel_input(message: Message, state: FSMContext, bot: Bot) -> 
     if not form_name:
         await _render_from_message(message, state, bot, "این فرم دیگر فعال نیست.", _markup([]))
         return
+
+    if form_name == "school_new" and not data.get("school_name"):
+        if not raw or len(raw) > 180:
+            await state.set_state(PanelInput.input)
+            await _render_from_message(
+                message, state, bot,
+                "نام مدرسه باید بین ۱ تا ۱۸۰ نویسه باشد. دوباره وارد کن.",
+                _markup([], "ui:cancel_input"),
+            )
+            return
+        await state.update_data(school_name=raw)
+        await state.set_state(PanelInput.input)
+        await _render_from_message(
+            message, state, bot,
+            "سال تحصیلی را وارد کن.\nمثال: ۱۴۰۵-۱۴۰۶",
+            _markup([], "ui:cancel_input"),
+        )
+        return
+
+    school_group_token = None
+    school_group_url = None
     try:
+        if form_name == "school_new":
+            school_name = data.get("school_name", "").strip()
+            if not school_name or not raw or len(raw) > 40:
+                raise ValueError("سال تحصیلی باید بین ۱ تا ۴۰ نویسه باشد.")
+            bot_profile = await bot.get_me()
+            if not bot_profile.username:
+                raise ValueError("شناسه عمومی ربات در تلگرام در دسترس نیست؛ ساخت مدرسه انجام نشد.")
         async with SessionFactory() as session:
             async with session.begin():
                 actor = await _user(session, message.from_user, private=True)
@@ -1030,21 +1072,36 @@ async def _handle_panel_input(message: Message, state: FSMContext, bot: Bot) -> 
                     await _ensure_group_member(session, actor, class_group.id)
                     result_text = f"✅ به کلاس «{escape(class_group.name)}» متصل شدی."
                 elif form_name == "school_new":
-                    values = [part.strip() for part in raw.split("|")]
-                    if len(values) not in {2, 3} or not values[0] or not values[1]:
-                        raise ValueError("قالب: نام مدرسه | سال تحصیلی | منطقه زمانی")
                     if not actor.is_platform_admin:
                         raise PermissionError("فقط مدیر کل می‌تواند مدرسه ایجاد کند.")
-                    timezone_name = values[2] if len(values) == 3 and values[2] else get_settings().default_timezone
-                    ZoneInfo(timezone_name)
-                    school = School(name=values[0][:180], timezone=timezone_name)
+                    timezone_name = get_settings().default_timezone
+                    school = School(name=school_name[:180], timezone=timezone_name)
+                    school_group_token = make_code()
+                    school.group_link_token_hash = hash_code(school_group_token)
+                    school.group_link_token_expires_at = (
+                        datetime.now(timezone.utc) + timedelta(hours=24)
+                    )
                     session.add(school)
                     await session.flush()
-                    year = AcademicYear(school_id=school.id, name=values[1][:40], is_current=True)
+                    year = AcademicYear(school_id=school.id, name=raw[:40], is_current=True)
                     session.add(year)
-                    session.add(SchoolMembership(school_id=school.id, user_id=actor.id, role="school_admin"))
+                    session.add(
+                        SchoolMembership(
+                            school_id=school.id,
+                            user_id=actor.id,
+                            role="school_admin",
+                        )
+                    )
                     await session.flush()
-                    result_text = f"✅ مدرسه ایجاد شد.\nشناسه مدرسه: <code>{school.id}</code>\nسال تحصیلی: {escape(year.name)}"
+                    school_group_url = (
+                        f"https://t.me/{bot_profile.username}?startgroup={school_group_token}"
+                    )
+                    result_text = (
+                        f"✅ مدرسه «{escape(school.name)}» ایجاد شد.\n"
+                        f"سال تحصیلی: {escape(year.name)}\n\n"
+                        "مرحله بعد: دکمه زیر را بزن، گروه مدرسه را انتخاب کن و ClassMate را به آن اضافه کن. "
+                        "این لینک تا ۲۴ ساعت معتبر است."
+                    )
                 elif form_name == "school_admin_add":
                     school_raw, telegram_raw = _parse_pipe_args(raw, 2)
                     school_id, telegram_id = int(school_raw), int(telegram_raw)
@@ -1260,7 +1317,7 @@ async def _handle_panel_input(message: Message, state: FSMContext, bot: Bot) -> 
                     )
                 else:
                     raise ValueError("این فرم شناخته نشده است.")
-        await state.update_data(panel_form=None)
+        await state.update_data(panel_form=None, school_name=None)
         if form_name == "join":
             back = "ui:classes"
         elif class_id:
@@ -1269,8 +1326,16 @@ async def _handle_panel_input(message: Message, state: FSMContext, bot: Bot) -> 
             back = "ui:platform"
         else:
             back = "ui:school"
+        result_rows = []
+        if school_group_url:
+            result_rows.append([
+                InlineKeyboardButton(
+                    text="➕ افزودن ربات به گروه مدرسه",
+                    url=school_group_url,
+                )
+            ])
         await _render_from_message(
-            message, state, bot, result_text, _markup([], back)
+            message, state, bot, result_text, _markup(result_rows, back)
         )
     except (ValueError, PermissionError, TypeError, KeyError) as exc:
         await state.set_state(PanelInput.input)
@@ -1278,8 +1343,8 @@ async def _handle_panel_input(message: Message, state: FSMContext, bot: Bot) -> 
             message,
             state,
             bot,
-            f"⚠️ {escape(str(exc))}\n\nاطلاعات را دوباره وارد کن یا لغو را بزن.",
-            _markup([[_button("لغو", "ui:cancel_input")]], _parent_for_form(form_name, class_id)),
+            f"⚠️ {escape(str(exc))}\n\nاطلاعات را دوباره وارد کن یا با دکمه بازگشت خارج شو.",
+            _markup([], "ui:cancel_input"),
         )
 
 
