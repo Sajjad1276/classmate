@@ -21,11 +21,10 @@ from classmate.bot.handlers import (
     WEEKDAYS,
     _classes_for_user,
     _ensure_group_member,
-    _format_exams,
-    _format_homework,
     _parse_pipe_args,
     _user,
 )
+from classmate.bot.formatters import _format_exams, _format_homework
 from classmate.bot.keyboards import main_reply_keyboard
 from classmate.bot.states import PanelInput
 from classmate.domain.enums import Role
