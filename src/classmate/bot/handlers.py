@@ -6,8 +6,15 @@ from zoneinfo import ZoneInfo
 from aiogram import Bot, F, Router
 from aiogram.filters import Command, CommandStart
 from aiogram.fsm.context import FSMContext
-from aiogram.types import BotCommandScopeChat, CallbackQuery, Message
+from aiogram.types import (
+    BotCommandScopeChat,
+    CallbackQuery,
+    InlineKeyboardButton,
+    InlineKeyboardMarkup,
+    Message,
+)
 from sqlalchemy import func, or_, select
+from sqlalchemy.dialects.postgresql import insert as pg_insert
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from classmate.bot.keyboards import (
@@ -18,6 +25,8 @@ from classmate.bot.keyboards import (
     group_menu_keyboard,
     wizard_cancel_keyboard,
     new_record_menu,
+    reminder_class_picker,
+    reminder_preferences_keyboard,
     subject_picker,
 )
 from classmate.bot.states import RecordWizard
@@ -605,17 +614,144 @@ async def menu_classes(callback: CallbackQuery):
     await callback.answer()
 
 
-@router.callback_query(F.data.in_({"menu:homework", "menu:exams", "menu:week", "menu:search", "menu:reminders"}))
+@router.callback_query(F.data.in_({"menu:homework", "menu:exams", "menu:week", "menu:search"}))
 async def menu_shortcuts(callback: CallbackQuery):
     messages = {
         "menu:homework": "برای مشاهده تکالیف در خصوصی از /homework شناسه_کلاس و در گروه از /homework استفاده کن.",
         "menu:exams": "برای مشاهده امتحانات از /exams شناسه_کلاس یا فرمان /exams در گروه استفاده کن.",
         "menu:week": "برای مشاهده برنامه هفتگی از /week شناسه_کلاس یا /week در گروه استفاده کن.",
         "menu:search": "جست‌وجوی نسخه اول مبتنی بر کلیدواژه است. از /ask نام درس یا عبارت موردنظر استفاده کن.",
-        "menu:reminders": "یادآوری‌های خصوصی فقط برای کاربرانی ارسال می‌شود که ربات را در خصوصی Start کرده باشند. تنظیمات پیش‌فرض کلاس فعال است.",
     }
     await callback.message.answer(messages[callback.data])
     await callback.answer()
+
+
+async def _show_reminder_class_selector(callback: CallbackQuery) -> None:
+    if callback.message.chat.type != "private":
+        await callback.answer("تنظیم یادآوری خصوصی فقط در گفت‌وگوی خصوصی در دسترس است.", show_alert=True)
+        return
+    async with SessionFactory() as session:
+        async with session.begin():
+            user = await _user(session, callback.from_user, private=True)
+            classes = await _classes_for_user(session, user)
+    if not classes:
+        await callback.message.answer("برای تنظیم یادآوری ابتدا عضو یک کلاس شو.")
+    else:
+        await callback.message.answer(
+            "🔔 <b>تنظیم یادآوری خصوصی</b>\\nکلاس موردنظر را انتخاب کن:",
+            reply_markup=reminder_class_picker(classes),
+        )
+    await callback.answer()
+
+
+async def _show_reminder_preferences(callback: CallbackQuery, class_id: int) -> None:
+    if callback.message.chat.type != "private":
+        await callback.answer("این تنظیم فقط در گفت‌وگوی خصوصی قابل تغییر است.", show_alert=True)
+        return
+    async with SessionFactory() as session:
+        async with session.begin():
+            user = await _user(session, callback.from_user, private=True)
+            if not await user_can_access_class(session, user, class_id):
+                await callback.answer("به این کلاس دسترسی نداری.", show_alert=True)
+                return
+            context = await get_class_with_school(session, class_id)
+            preference = await session.scalar(
+                select(NotificationPreference).where(
+                    NotificationPreference.user_id == user.id,
+                    NotificationPreference.class_id == class_id,
+                )
+            )
+            homework_enabled = preference.homework_enabled if preference else True
+            exams_enabled = preference.exams_enabled if preference else True
+    class_name = context[0].name if context else "کلاس"
+    await callback.message.edit_text(
+        f"🔔 <b>تنظیم یادآوری — {escape(class_name)}</b>\\n"
+        "این تنظیم فقط روی پیام‌های خصوصی اثر دارد؛ اعلان گروهی کلاس جداگانه ارسال می‌شود.",
+        reply_markup=reminder_preferences_keyboard(
+            class_id,
+            homework_enabled=homework_enabled,
+            exams_enabled=exams_enabled,
+        ),
+    )
+    await callback.answer()
+
+
+@router.callback_query(F.data == "menu:reminders")
+async def menu_reminders(callback: CallbackQuery):
+    await _show_reminder_class_selector(callback)
+
+
+@router.callback_query(F.data == "reminders:list")
+async def reminder_class_list(callback: CallbackQuery):
+    await _show_reminder_class_selector(callback)
+
+
+@router.callback_query(F.data.startswith("reminders:class:"))
+async def reminder_class_selected(callback: CallbackQuery):
+    try:
+        class_id = int(callback.data.rsplit(":", 1)[1])
+        if class_id < 1:
+            raise ValueError
+    except (TypeError, ValueError):
+        await callback.answer("شناسه کلاس نامعتبر است.", show_alert=True)
+        return
+    await _show_reminder_preferences(callback, class_id)
+
+
+@router.callback_query(F.data.startswith("reminders:set:"))
+async def reminder_preference_set(callback: CallbackQuery):
+    try:
+        _, _, category, class_id_raw, enabled_raw = callback.data.split(":")
+        class_id = int(class_id_raw)
+        if category not in {"homework", "exams"} or class_id < 1 or enabled_raw not in {"0", "1"}:
+            raise ValueError
+        enabled = enabled_raw == "1"
+    except (TypeError, ValueError):
+        await callback.answer("درخواست تنظیم یادآوری نامعتبر است.", show_alert=True)
+        return
+    if callback.message.chat.type != "private":
+        await callback.answer("تنظیم یادآوری فقط در خصوصی قابل تغییر است.", show_alert=True)
+        return
+    async with SessionFactory() as session:
+        async with session.begin():
+            user = await _user(session, callback.from_user, private=True)
+            if not await user_can_access_class(session, user, class_id):
+                await callback.answer("به این کلاس دسترسی نداری.", show_alert=True)
+                return
+            values = {
+                "user_id": user.id,
+                "class_id": class_id,
+                "homework_enabled": enabled if category == "homework" else True,
+                "exams_enabled": enabled if category == "exams" else True,
+            }
+            update_values = {
+                "homework_enabled" if category == "homework" else "exams_enabled": enabled
+            }
+            statement = pg_insert(NotificationPreference).values(**values)
+            statement = statement.on_conflict_do_update(
+                constraint="uq_notification_user_class",
+                set_=update_values,
+            )
+            await session.execute(statement)
+    await _show_reminder_preferences(callback, class_id)
+
+
+@router.message(F.text == "🔔 یادآوری")
+async def reminder_settings_reply_button(message: Message):
+    if message.chat.type != "private":
+        await message.answer("تنظیم یادآوری خصوصی فقط در گفت‌وگوی خصوصی در دسترس است.")
+        return
+    async with SessionFactory() as session:
+        async with session.begin():
+            user = await _user(session, message.from_user, private=True)
+            classes = await _classes_for_user(session, user)
+    if not classes:
+        await message.answer("برای تنظیم یادآوری ابتدا عضو یک کلاس شو.")
+        return
+    await message.answer(
+        "🔔 <b>تنظیم یادآوری خصوصی</b>\\nکلاس موردنظر را انتخاب کن:",
+        reply_markup=reminder_class_picker(classes),
+    )
 
 
 @router.message(Command("school_new"))
