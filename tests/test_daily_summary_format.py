@@ -43,7 +43,8 @@ def test_daily_summary_is_bounded_and_reports_overflow():
         reports, homework, exams, date(2026, 11, 19), "Asia/Tehran"
     )
 
-    assert len(result) < 4000
+    assert len(result.encode("utf-16-le")) // 2 < 4096
+    assert "\\n" not in result
     assert "موارد بیشتری وجود دارد" in result
     assert "<unsafe>" not in result
     assert "&lt;unsafe&gt;" in result
@@ -59,4 +60,4 @@ def test_daily_summary_handles_empty_categories():
 
     assert "گزارش تأییدشده‌ای" in result
     assert "امروز تکلیف موعدداری ثبت نشده است." in result
-    assert "امتحان آینده‌ای" in result
+    assert "امروز امتحانی ثبت نشده است." in result
