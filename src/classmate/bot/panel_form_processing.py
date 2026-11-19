@@ -31,7 +31,6 @@ from classmate.services.permissions import (
     make_code,
 )
 from classmate.services.records import (
-    normalize_subject_name,
     add_subject,
     audit,
     get_or_create_next_lesson,
@@ -39,7 +38,6 @@ from classmate.services.records import (
     list_exams,
     list_homework,
     list_homework_for_lesson,
-    normalize_subject_name,
 )
 
 
