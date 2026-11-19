@@ -242,7 +242,7 @@ def _parse_pipe_args(raw: str, count: int) -> list[str]:
 
 @router.message(
     F.chat.type.in_({"group", "supergroup"}),
-    F.text.regexp(r"^/start(?:@\\w+)?\\s+CM_[A-Z0-9_-]{1,32}$"),
+    F.text.regexp(r"^/start(?:@\w+)?\s+CM_[A-Z0-9_-]{1,32}$"),
 )
 async def connect_school_group(message: Message, bot: Bot):
     """Consume a one-time startgroup payload and bind this Telegram group to a school."""
