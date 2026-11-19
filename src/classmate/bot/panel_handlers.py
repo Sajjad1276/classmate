@@ -1,7 +1,7 @@
 from __future__ import annotations
 
 import logging
-from datetime import datetime, time, timedelta
+from datetime import datetime
 from html import escape
 from zoneinfo import ZoneInfo
 
@@ -20,8 +20,6 @@ from sqlalchemy import select
 from classmate.bot.handlers import (
     WEEKDAYS,
     _classes_for_user,
-    _ensure_group_member,
-    _parse_pipe_args,
     _user,
 )
 from classmate.bot.formatters import _format_exams, _format_homework
@@ -29,20 +27,15 @@ from classmate.bot.panel_form_processing import handle_panel_input, handle_searc
 from classmate.bot.keyboards import main_reply_keyboard
 from classmate.bot.states import PanelInput
 from classmate.domain.enums import Role
-from classmate.core.config import get_settings
 from classmate.db.models import (
-    AcademicYear,
-    ClassGroup,
     ClassMembership,
     NotificationPreference,
-    School,
     SchoolMembership,
     Subject,
     TimetableEntry,
-    User,
 )
 from classmate.db.session import SessionFactory
-from classmate.domain.dates import jalali_date, jalali_datetime
+from classmate.domain.dates import jalali_date
 from classmate.services.permissions import (
     can_approve,
     get_class_with_school,
@@ -52,17 +45,11 @@ from classmate.services.permissions import (
     user_can_access_class,
 )
 from classmate.services.records import (
-    add_subject,
     approve_record,
-    audit,
-    get_or_create_next_lesson,
-    get_subject,
     list_exams,
     list_homework,
-    list_homework_for_lesson,
     list_pending_records,
     list_reports,
-    normalize_subject_name,
     reject_record,
 )
 
