@@ -80,17 +80,30 @@ async def test_approval_self_approval_guard_and_cancellation(db_session):
     assert allowed
     assert homework.status == RecordStatus.APPROVED
 
-    db_session.add(ReminderJob(
-        class_id=class_group.id,
-        entity_type="homework",
-        entity_id=homework.id,
-        target_type="private",
-        target_id=creator.telegram_id,
-        message_text="Reminder",
-        scheduled_at=datetime.now(timezone.utc) + timedelta(days=1),
-        dedupe_key="integration:cancel:homework:1",
-        status=ReminderStatus.PENDING,
-    ))
+    db_session.add_all([
+        ReminderJob(
+            class_id=class_group.id,
+            entity_type="homework",
+            entity_id=homework.id,
+            target_type="private",
+            target_id=creator.telegram_id,
+            message_text="Pending reminder",
+            scheduled_at=datetime.now(timezone.utc) + timedelta(days=1),
+            dedupe_key="integration:cancel:homework:pending",
+            status=ReminderStatus.PENDING,
+        ),
+        ReminderJob(
+            class_id=class_group.id,
+            entity_type="homework",
+            entity_id=homework.id,
+            target_type="private",
+            target_id=creator.telegram_id,
+            message_text="Uncertain reminder",
+            scheduled_at=datetime.now(timezone.utc) + timedelta(days=1),
+            dedupe_key="integration:cancel:homework:uncertain",
+            status=ReminderStatus.UNCERTAIN,
+        ),
+    ])
     await db_session.flush()
 
     cancelled, message = await cancel_approved_record(
@@ -100,8 +113,10 @@ async def test_approval_self_approval_guard_and_cancellation(db_session):
     assert "غیرفعال" in message
     assert homework.status == RecordStatus.CANCELLED
     assert homework.cancelled_at is not None
-    reminder = await db_session.scalar(select(ReminderJob).where(ReminderJob.dedupe_key == "integration:cancel:homework:1"))
-    assert reminder.status == ReminderStatus.CANCELLED
+    pending_reminder = await db_session.scalar(select(ReminderJob).where(ReminderJob.dedupe_key == "integration:cancel:homework:pending"))
+    uncertain_reminder = await db_session.scalar(select(ReminderJob).where(ReminderJob.dedupe_key == "integration:cancel:homework:uncertain"))
+    assert pending_reminder.status == ReminderStatus.CANCELLED
+    assert uncertain_reminder.status == ReminderStatus.CANCELLED
 
 
 @pytest.mark.asyncio
