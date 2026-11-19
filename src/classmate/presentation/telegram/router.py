@@ -11,6 +11,7 @@ from aiogram.filters import Command, CommandStart
 from aiogram.fsm.context import FSMContext
 from aiogram.types import CallbackQuery, InlineKeyboardButton, InlineKeyboardMarkup, Message
 from sqlalchemy import select
+from sqlalchemy.dialects.postgresql import insert as pg_insert
 
 from classmate.application.access import (
     class_role_for,
@@ -589,21 +590,50 @@ async def start(message: Message, state: FSMContext, bot: Bot) -> None:
             except DomainError as exc:
                 await message.answer(f"⚠️ {html(str(exc))}")
                 return
+        bound_context = None
         async with SessionFactory() as session:
             async with session.begin():
                 bound = await get_bound_class(session, message.chat.id)
                 if bound:
                     class_group, school = bound
-                    await message.answer(
-                        f"🏫 <b>{html(class_group.name)}</b> — {html(school.name)}",
-                        reply_markup=class_dashboard(
-                            class_group.id, can_review=True, can_manage=False
-                        ),
+                    group_user = await _user(session, message.from_user, private=False)
+                    await session.execute(
+                        pg_insert(ClassMembership).values(
+                            class_id=class_group.id,
+                            user_id=group_user.id,
+                            role=Role.STUDENT.value,
+                            is_active=True,
+                        ).on_conflict_do_nothing(
+                            constraint="uq_class_user"
+                        )
                     )
-                    return
-                school_name = await session.scalar(
-                    select(School.name).where(School.telegram_group_id == message.chat.id)
-                )
+                    role = await class_role_for(session, group_user, class_group.id)
+                    can_review = (
+                        group_user.is_platform_admin
+                        or await school_admin_for(session, group_user, school.id)
+                        or role in {
+                            Role.CLASS_MANAGER.value,
+                            Role.TRUSTED_APPROVER.value,
+                        }
+                    )
+                    bound_context = (class_group, school, can_review)
+                school_name = None
+                if bound_context is None:
+                    school_name = await session.scalar(
+                        select(School.name).where(School.telegram_group_id == message.chat.id)
+                    )
+        if bound_context:
+            class_group, school, can_review = bound_context
+            await message.answer(
+                f"🏫 <b>{html(class_group.name)}</b> — {html(school.name)}",
+                reply_markup=class_dashboard(
+                    class_group.id,
+                    can_review=can_review,
+                    can_manage=False,
+                    group_mode=True,
+                ),
+            )
+            return
         if school_name:
             await message.answer(f"🏢 گروه مرکزی مدرسه {html(school_name)}")
         else:
@@ -973,8 +1003,7 @@ async def platform_callback(callback: CallbackQuery, state: FSMContext) -> None:
 
 
 @router.callback_query(
-    F.data == "v2:school:create",
-    F.data.startswith("v2:school:open:"),
+    (F.data == "v2:school:create") | F.data.startswith("v2:school:open:")
 )
 async def school_callback(callback: CallbackQuery, state: FSMContext) -> None:
     parts = callback.data.split(":")
