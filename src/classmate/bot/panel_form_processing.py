@@ -1,6 +1,6 @@
 from __future__ import annotations
 
-from datetime import datetime, time, timedelta, timezone
+from datetime import datetime, time, timedelta
 from html import escape
 
 from aiogram import Bot
@@ -9,7 +9,6 @@ from aiogram.types import InlineKeyboardButton, Message
 from sqlalchemy import select
 
 from classmate.bot.handlers import WEEKDAYS, _ensure_group_member, _parse_pipe_args, _user
-from classmate.bot.keyboards import main_reply_keyboard
 from classmate.bot.states import PanelInput
 from classmate.bot.formatters import _format_exams, _format_homework
 from classmate.core.config import get_settings
@@ -19,7 +18,6 @@ from classmate.db.models import (
     ClassMembership,
     School,
     SchoolMembership,
-    Subject,
     TimetableEntry,
     User,
 )
@@ -33,6 +31,7 @@ from classmate.services.permissions import (
     make_code,
 )
 from classmate.services.records import (
+    normalize_subject_name,
     add_subject,
     audit,
     get_or_create_next_lesson,
@@ -42,6 +41,11 @@ from classmate.services.records import (
     list_homework_for_lesson,
     normalize_subject_name,
 )
+
+
+def _parse_persian_int(value: str) -> int:
+    translated = value.translate(str.maketrans("۰۱۲۳۴۵۶۷۸۹", "0123456789"))
+    return int(translated)
 
 
 async def handle_panel_input(
