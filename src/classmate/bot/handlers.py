@@ -250,16 +250,6 @@ async def connect_school_group(message: Message, bot: Bot):
         return
     payload = message.text.split(maxsplit=1)[1].strip()
 
-    try:
-        member = await bot.get_chat_member(message.chat.id, message.from_user.id)
-    except Exception:
-        logger.exception("Could not verify the user who linked a school group")
-        await message.answer("نتوانستم دسترسی مدیر گروه را بررسی کنم. دوباره تلاش کن.")
-        return
-    if member.status not in {"creator", "administrator"}:
-        await message.answer("برای اتصال گروه، لینک باید توسط مدیر همان گروه اجرا شود.")
-        return
-
     async with SessionFactory() as session:
         async with session.begin():
             actor = await _user(session, message.from_user, private=False)
