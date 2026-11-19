@@ -121,3 +121,22 @@ async def user_can_access_class(
         .where(ClassGroup.id == class_id)
     )
     return bool(school_id and await is_school_admin(session, user, school_id))
+
+
+async def can_manage_class(
+    session: AsyncSession, user: User, class_id: int
+) -> bool:
+    """Class management is limited to platform/school admins and class managers."""
+    if user.is_platform_admin:
+        return True
+    school_id = await session.scalar(
+        select(AcademicYear.school_id)
+        .join(ClassGroup, ClassGroup.academic_year_id == AcademicYear.id)
+        .where(ClassGroup.id == class_id, ClassGroup.is_active.is_(True))
+    )
+    if school_id is None:
+        return False
+    if await is_school_admin(session, user, school_id):
+        return True
+    membership = await class_membership(session, user.id, class_id)
+    return bool(membership and membership.role == Role.CLASS_MANAGER)
