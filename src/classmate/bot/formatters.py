@@ -37,11 +37,12 @@ async def _pending_message(
 def _format_homework(rows) -> str:
     if not rows:
         return "هنوز تکلیف تأییدشده‌ای ثبت نشده است."
-    lines = [
-        "📚 <b>تکالیف تأییدشده</b>",
-        "<i>حداکثر ۳۰ تکلیف در این فهرست نمایش داده می‌شود.</i>",
-    ]
-    for homework, subject in rows:
+    overflow = len(rows) > 30
+    visible_rows = rows[:30]
+    lines = ["📚 <b>تکالیف تأییدشده</b>"]
+    if overflow:
+        lines.append("<i>بیش از ۳۰ تکلیف ثبت شده؛ ۳۰ مورد نخست نمایش داده شده‌اند.</i>")
+    for homework, subject in visible_rows:
         due = jalali_date(homework.due_on) if homework.due_on else "نامشخص"
         lines.append(
             f"\n• <b>{escape(subject.name)}</b> — {escape(homework.title)}\n"
