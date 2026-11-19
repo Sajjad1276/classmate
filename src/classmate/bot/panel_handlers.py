@@ -1030,8 +1030,13 @@ async def review_callback(callback: CallbackQuery, state: FSMContext):
 
 
 def _parse_persian_int(value: str) -> int:
-    translated = value.translate(str.maketrans("۰۱۲۳۴۵۶۷۸۹", "0123456789"))
-    return int(translated)
+    """Parse integers written with Persian or Arabic-Indic digits as well as ASCII."""
+    digit_map = str.maketrans(
+        "۰۱۲۳۴۵۶۷۸۹٠١٢٣٤٥٦٧٨٩",
+        "01234567890123456789",
+    )
+    normalized = value.strip().translate(digit_map).replace(",", "").replace("٬", "")
+    return int(normalized)
 
 
 async def _handle_panel_input(message: Message, state: FSMContext, bot: Bot) -> None:
