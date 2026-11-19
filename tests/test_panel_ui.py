@@ -1,4 +1,8 @@
-from classmate.bot.keyboards import main_reply_keyboard, wizard_cancel_keyboard
+from classmate.bot.keyboards import (
+    group_menu_keyboard,
+    main_reply_keyboard,
+    wizard_cancel_keyboard,
+)
 
 
 def _labels(markup) -> set[str]:
@@ -52,3 +56,26 @@ def test_class_manager_sees_class_management_but_not_platform_admin():
 def test_wizard_keyboard_has_a_return_to_menu_control():
     labels = _labels(wizard_cancel_keyboard())
     assert labels == {"⬅️ بازگشت"}
+
+
+
+def test_group_menu_shows_public_class_actions():
+    rows = group_menu_keyboard().inline_keyboard
+    labels = {button.text for row in rows for button in row}
+
+    assert "📚 تکالیف" in labels
+    assert "📝 امتحانات" in labels
+    assert "📅 برنامه هفتگی" in labels
+    assert "🗒 امروز" in labels
+    assert "➕ ثبت تکلیف" in labels
+    assert "🕓 صف بررسی" not in labels
+
+
+def test_group_menu_shows_review_only_for_approvers():
+    labels = {
+        button.text
+        for row in group_menu_keyboard(can_review=True).inline_keyboard
+        for button in row
+    }
+
+    assert "🕓 صف بررسی" in labels
