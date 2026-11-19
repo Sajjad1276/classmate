@@ -68,6 +68,12 @@ The private interface is button-driven. A school can be linked to one central Te
 - Railway deployment preparation: docs/RAILWAY.md
 - Operations runbook: docs/OPERATIONS.md
 
-## Current MVP limitations
+## Current MVP boundaries
 
-The current `/today`-equivalent panel shows the approved daily report; it is not yet a complete daily dashboard combining periods, due homework and exams. The next-session resolver uses the next future weekday occurrence in the timetable (08:00 when a period has no start time); holidays and one-off timetable changes are not automatically inferred. Record revision UI, a web dashboard, attendance/grades, advanced analytics and richer notification schedules are follow-up tasks. FSM form state is in-memory, while submitted records and reminder jobs are durable in PostgreSQL.
+- The daily summary combines approved reports, homework due today and exams scheduled today; it does not yet provide attendance, grades or a full bell-by-bell "today" timetable.
+- The next-lesson resolver respects timetable validity dates and school timezones, but does not infer holidays or one-off timetable changes.
+- Private homework and exam reminders can be configured independently per class. Turning a category off cancels queued private jobs; turning it on schedules future reminders for already-approved upcoming records. Group reminders are independent of personal preferences.
+- Approved homework and exams can be cancelled with an audit entry; an in-place edit/revision workflow is not yet available.
+- Automated school-wide announcements, group moderation/preferences, a web dashboard and advanced analytics remain follow-up work.
+- FSM form state is in-memory, so a bot restart can interrupt an unfinished form. Submitted records, audit events and reminder jobs are durable in PostgreSQL.
+- Telegram reminder delivery is at-least-once. A crash after Telegram accepts a message but before the database records success can cause a duplicate delivery.
