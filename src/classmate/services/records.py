@@ -1,4 +1,4 @@
-from datetime import date, datetime, time, timedelta
+from datetime import date, datetime, time, timedelta, timezone
 from zoneinfo import ZoneInfo
 
 from sqlalchemy import or_, select
@@ -384,7 +384,11 @@ async def list_exams(session: AsyncSession, class_id: int) -> list[tuple[Exam, S
             await session.execute(
                 select(Exam, Subject)
                 .join(Subject, Exam.subject_id == Subject.id)
-                .where(Exam.class_id == class_id, Exam.status == "APPROVED")
+                .where(
+                    Exam.class_id == class_id,
+                    Exam.status == "APPROVED",
+                    Exam.scheduled_at >= datetime.now(timezone.utc),
+                )
                 .order_by(Exam.scheduled_at.asc())
                 .limit(30)
             )
@@ -421,23 +425,53 @@ async def list_pending_records(session: AsyncSession, class_id: int):
     return pending
 
 
+def local_day_window(local_date: date, timezone_name: str) -> tuple[datetime, datetime]:
+    """Return the timezone-aware [start, end) boundaries of a local calendar day."""
+    zone = ZoneInfo(timezone_name)
+    start = datetime.combine(local_date, time.min, tzinfo=zone)
+    next_day = local_date + timedelta(days=1)
+    end = datetime.combine(next_day, time.min, tzinfo=zone)
+    return start, end
+
+
 async def list_daily_summary(
     session: AsyncSession,
     class_id: int,
     local_date: date,
     timezone_name: str,
 ):
-    """Return today's approved report, due homework and scheduled exams."""
-    zone = ZoneInfo(timezone_name)
+    """Return today's approved report, due homework and exams scheduled today."""
+    start, end = local_day_window(local_date, timezone_name)
     reports = await list_reports(session, class_id, local_date)
-    homework = [
-        row for row in await list_homework(session, class_id)
-        if row[0].due_on == local_date
-    ]
-    exams = [
-        row for row in await list_exams(session, class_id)
-        if row[0].scheduled_at.astimezone(zone).date() == local_date
-    ]
+    homework = list(
+        (
+            await session.execute(
+                select(Homework, Subject)
+                .join(Subject, Homework.subject_id == Subject.id)
+                .where(
+                    Homework.class_id == class_id,
+                    Homework.status == "APPROVED",
+                    Homework.due_on == local_date,
+                )
+                .order_by(Homework.created_at.desc())
+            )
+        ).all()
+    )
+    exams = list(
+        (
+            await session.execute(
+                select(Exam, Subject)
+                .join(Subject, Exam.subject_id == Subject.id)
+                .where(
+                    Exam.class_id == class_id,
+                    Exam.status == "APPROVED",
+                    Exam.scheduled_at >= start,
+                    Exam.scheduled_at < end,
+                )
+                .order_by(Exam.scheduled_at.asc())
+            )
+        ).all()
+    )
     return reports, homework, exams
 
 
