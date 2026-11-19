@@ -59,7 +59,6 @@ def class_dashboard(
             button("🔔 یادآوری‌های من", f"v2:action:reminders:{class_id}"),
             button("🔎 جست‌وجو", f"v2:action:search:{class_id}"),
         ])
-    ]
     if can_review:
         rows.append([button("🕓 صف بررسی", f"v2:action:pending:{class_id}")])
     if can_manage and not group_mode:
