@@ -344,6 +344,8 @@ async def start(message: Message, state: FSMContext, bot: Bot):
         except Exception:
             pass
     await state.clear()
+    if message.chat.type == "private":
+        await state.update_data(reply_keyboard_visible=True)
     async with SessionFactory() as session:
         async with session.begin():
             user = await _user(session, message.from_user, private=message.chat.type == "private")
