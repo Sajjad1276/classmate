@@ -1,5 +1,4 @@
 from datetime import date, datetime
-from html import escape
 from zoneinfo import ZoneInfo
 
 from aiogram import Bot, F, Router
@@ -24,7 +23,6 @@ from classmate.bot.keyboards import (
 )
 from classmate.bot.states import RecordWizard
 from classmate.db.models import (
-    ClassGroup,
     ClassMembership,
     ClassSubject,
     SchoolMembership,
@@ -47,7 +45,6 @@ from classmate.services.records import (
     create_homework,
     get_group_context,
     get_or_create_next_lesson,
-    get_subject,
     normalize_subject_name,
 )
 
