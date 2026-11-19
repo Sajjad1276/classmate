@@ -2005,6 +2005,13 @@ async def _handle_search_input(message: Message, state: FSMContext, bot: Bot) ->
     ~F.text.startswith("/"),
     ~F.text.in_(MAIN_BUTTONS),
 )
+def _should_process_panel_text(text: str | None) -> bool:
+    """Only ordinary free text belongs to a pending form/search input."""
+    if not text or text.startswith("/"):
+        return False
+    return text.strip() not in MAIN_BUTTONS
+
+
 async def panel_text_input(message: Message, state: FSMContext, bot: Bot):
     # Keep submitted text in history; do not swallow commands or main-menu taps
     # while a form is waiting for input.
