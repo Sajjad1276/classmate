@@ -215,7 +215,7 @@ TELEGRAM_SAFE_TEXT_LIMIT = 3600
 
 def _append_bounded(parts: list[str], block: str) -> bool:
     """Append one complete HTML block only when the encoded message stays bounded."""
-    candidate = "\\n\\n".join([*parts, block])
+    candidate = "\n\n".join([*parts, block])
     # Telegram counts UTF-16 code units; escaped HTML entities are included here.
     if len(candidate.encode("utf-16-le")) // 2 > TELEGRAM_SAFE_TEXT_LIMIT:
         return False
@@ -229,8 +229,8 @@ def _homework_block(homework, subject, description_limit: int = 160) -> str:
     if homework.description and len(homework.description) > description_limit:
         description += "…"
     return (
-        f"• <b>{escape(subject.name[:40])}</b> — {escape(homework.title[:60])}\\n"
-        f"  {escape(description)}\\n  موعد: {due}"
+        f"• <b>{escape(subject.name[:40])}</b> — {escape(homework.title[:60])}\n"
+        f"  {escape(description)}\n  موعد: {due}"
     )
 
 
@@ -239,8 +239,8 @@ def _exam_block(exam, subject, timezone_name: str, scope_limit: int = 100) -> st
     if exam.scope and len(exam.scope) > scope_limit:
         scope += "…"
     return (
-        f"• <b>{escape(subject.name[:40])}</b> — {escape(exam.title[:60])}\\n"
-        f"  محدوده: {escape(scope)}\\n"
+        f"• <b>{escape(subject.name[:40])}</b> — {escape(exam.title[:60])}\n"
+        f"  محدوده: {escape(scope)}\n"
         f"  زمان: {jalali_datetime(exam.scheduled_at, timezone_name)}"
     )
 
@@ -255,7 +255,7 @@ def _format_homework(rows) -> str:
             omitted += 1
     if omitted:
         parts.append(f"ℹ️ {omitted} تکلیف دیگر به‌دلیل محدودیت طول پیام نمایش داده نشد.")
-    return "\\n\\n".join(parts)
+    return "\n\n".join(parts)
 
 
 def _format_exams(rows, timezone_name: str) -> str:
@@ -268,7 +268,7 @@ def _format_exams(rows, timezone_name: str) -> str:
             omitted += 1
     if omitted:
         parts.append(f"ℹ️ {omitted} امتحان دیگر به‌دلیل محدودیت طول پیام نمایش داده نشد.")
-    return "\\n\\n".join(parts)
+    return "\n\n".join(parts)
 
 
 def _format_daily_summary(reports, homework_rows, exam_rows, local_date, timezone_name: str) -> str:
@@ -281,7 +281,7 @@ def _format_daily_summary(reports, homework_rows, exam_rows, local_date, timezon
             body = (report.body or "")[:140]
             if report.body and len(report.body) > 140:
                 body += "…"
-            block = f"🗒 <b>{title}</b>\\n{escape(body)}"
+            block = f"🗒 <b>{title}</b>\n{escape(body)}"
             if not _append_bounded(parts, block):
                 omitted += 1
     else:
@@ -305,7 +305,7 @@ def _format_daily_summary(reports, homework_rows, exam_rows, local_date, timezon
 
     if omitted:
         parts.append("ℹ️ موارد بیشتری وجود دارد که به‌دلیل محدودیت طول پیام در این خلاصه نمایش داده نشد.")
-    return "\\n\\n".join(parts)
+    return "\n\n".join(parts)
 
 
 def _parse_pipe_args(raw: str, count: int) -> list[str]:
@@ -1517,7 +1517,7 @@ async def approval_callback(callback: CallbackQuery, bot: Bot):
                 if action == "approve":
                     await bot.send_message(
                         class_group.group_chat_id,
-                        f"✅ <b>{entity_label} تأیید شد</b>\\n"
+                        f"✅ <b>{entity_label} تأیید شد</b>\n"
                         "این مورد اکنون در فهرست اطلاعات قطعی کلاس قابل مشاهده است."
                     )
                 else:
