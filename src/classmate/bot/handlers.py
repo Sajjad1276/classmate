@@ -733,24 +733,6 @@ async def reminder_preference_set(callback: CallbackQuery):
     await _show_reminder_preferences(callback, class_id)
 
 
-@router.message(F.text == "🔔 یادآوری")
-async def reminder_settings_reply_button(message: Message):
-    if message.chat.type != "private":
-        await message.answer("تنظیم یادآوری خصوصی فقط در گفت‌وگوی خصوصی در دسترس است.")
-        return
-    async with SessionFactory() as session:
-        async with session.begin():
-            user = await _user(session, message.from_user, private=True)
-            classes = await _classes_for_user(session, user)
-    if not classes:
-        await message.answer("برای تنظیم یادآوری ابتدا عضو یک کلاس شو.")
-        return
-    await message.answer(
-        "🔔 <b>تنظیم یادآوری خصوصی</b>\nکلاس موردنظر را انتخاب کن:",
-        reply_markup=reminder_class_picker(classes),
-    )
-
-
 @router.message(Command("school_new"))
 async def school_new(message: Message):
     try:
