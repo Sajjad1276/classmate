@@ -48,6 +48,10 @@ class School(TimestampMixin, Base):
     id: Mapped[int] = mapped_column(Integer, primary_key=True)
     name: Mapped[str] = mapped_column(String(180), nullable=False)
     timezone: Mapped[str] = mapped_column(String(64), default="Asia/Tehran", nullable=False)
+    telegram_group_id: Mapped[int | None] = mapped_column(BigInteger, unique=True, index=True)
+    telegram_group_title: Mapped[str | None] = mapped_column(String(180))
+    group_link_token_hash: Mapped[str | None] = mapped_column(String(64), unique=True, index=True)
+    group_link_token_expires_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True))
     is_active: Mapped[bool] = mapped_column(Boolean, default=True, nullable=False)
 
 
