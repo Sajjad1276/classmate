@@ -55,3 +55,47 @@ async def test_postgres_fsm_storage_persists_state_and_data_across_instances():
             async with session.begin():
                 await session.execute(delete(FSMStateRecord).where(FSMStateRecord.key == storage_a._key(key)))
         await engine.dispose()
+
+
+@pytest.mark.asyncio
+async def test_postgres_worker_marks_ambiguous_delivery_uncertain(monkeypatch):
+    database_url = os.getenv("DATABASE_URL")
+    if not database_url:
+        pytest.skip("DATABASE_URL is required for PostgreSQL worker integration tests")
+    from datetime import datetime, timedelta, timezone
+
+    from classmate.db.models import ReminderJob
+    from classmate.domain.enums import ReminderStatus
+    from classmate.worker import main as worker_main
+
+    engine = create_async_engine(database_url)
+    factory = async_sessionmaker(engine, expire_on_commit=False)
+    monkeypatch.setattr(worker_main, "SessionFactory", factory)
+    dedupe_key = f"runtime-uncertain:{time.time_ns()}"
+    try:
+        async with factory() as session:
+            async with session.begin():
+                row = ReminderJob(
+                    class_id=1,
+                    entity_type="homework",
+                    entity_id=1,
+                    target_type="private",
+                    target_id=999999,
+                    message_text="test only",
+                    scheduled_at=datetime.now(timezone.utc) - timedelta(seconds=1),
+                    dedupe_key=dedupe_key,
+                )
+                session.add(row)
+                await session.flush()
+                job_id = row.id
+        await worker_main.finish_job(job_id, "network timeout", 1, uncertain=True)
+        async with factory() as session:
+            row = await session.get(ReminderJob, job_id)
+            assert row.status == ReminderStatus.UNCERTAIN
+            assert row.locked_at is None
+            assert "network timeout" in row.last_error
+    finally:
+        async with factory() as session:
+            async with session.begin():
+                await session.execute(delete(ReminderJob).where(ReminderJob.dedupe_key == dedupe_key))
+        await engine.dispose()
