@@ -1186,8 +1186,22 @@ async def cancel_input(callback: CallbackQuery, state: FSMContext):
 
 @router.callback_query(F.data.startswith("ui:review:"))
 async def review_callback(callback: CallbackQuery, state: FSMContext):
-    _, _, action, entity_type, entity_id_raw, class_id_raw = callback.data.split(":")
-    entity_id, class_id = int(entity_id_raw), int(class_id_raw)
+    try:
+        parts = callback.data.split(":")
+        if len(parts) != 6:
+            raise ValueError
+        _, _, action, entity_type, entity_id_raw, class_id_raw = parts
+        entity_id, class_id = int(entity_id_raw), int(class_id_raw)
+        if (
+            action not in {"approve", "reject"}
+            or entity_type not in {"homework", "exam", "report"}
+            or entity_id < 1
+            or class_id < 1
+        ):
+            raise ValueError
+    except (AttributeError, TypeError, ValueError):
+        await callback.answer("درخواست بررسی نامعتبر یا منقضی شده است.", show_alert=True)
+        return
     async with SessionFactory() as session:
         async with session.begin():
             user = await _user(session, callback.from_user, private=True)
