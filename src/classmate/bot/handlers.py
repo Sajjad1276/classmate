@@ -81,6 +81,37 @@ async def _user(session: AsyncSession, tg_user, private: bool = False) -> User:
     return user
 
 
+async def _main_keyboard_for_user(session: AsyncSession, user: User):
+    platform_admin = user.is_platform_admin
+    school_admin = platform_admin or (
+        await session.scalar(
+            select(SchoolMembership.id).where(
+                SchoolMembership.user_id == user.id,
+                SchoolMembership.role == "school_admin",
+                SchoolMembership.is_active.is_(True),
+            )
+        )
+    ) is not None
+    class_roles = set(
+        (
+            await session.scalars(
+                select(ClassMembership.role).where(
+                    ClassMembership.user_id == user.id,
+                    ClassMembership.is_active.is_(True),
+                )
+            )
+        ).all()
+    )
+    class_manager = "class_manager" in class_roles
+    approver = school_admin or class_manager or "trusted_approver" in class_roles
+    return main_reply_keyboard(
+        is_platform_admin=platform_admin,
+        is_school_admin=school_admin,
+        is_class_manager=class_manager,
+        is_approver=approver,
+    )
+
+
 async def _classes_for_user(session: AsyncSession, user: User) -> list[ClassGroup]:
     query = (
         select(ClassGroup)
@@ -215,30 +246,12 @@ async def start(message: Message, state: FSMContext):
     async with SessionFactory() as session:
         async with session.begin():
             user = await _user(session, message.from_user, private=message.chat.type == "private")
+            keyboard = (
+                await _main_keyboard_for_user(session, user)
+                if message.chat.type == "private"
+                else None
+            )
             platform_admin = user.is_platform_admin
-            school_admin = platform_admin or (
-                await session.scalar(
-                    select(SchoolMembership.id).where(
-                        SchoolMembership.user_id == user.id,
-                        SchoolMembership.role == "school_admin",
-                        SchoolMembership.is_active.is_(True),
-                    )
-                )
-            ) is not None
-            class_roles = set(
-                (
-                    await session.scalars(
-                        select(ClassMembership.role).where(
-                            ClassMembership.user_id == user.id,
-                            ClassMembership.is_active.is_(True),
-                        )
-                    )
-                ).all()
-            )
-            class_manager = "class_manager" in class_roles
-            approver = (
-                school_admin or class_manager or "trusted_approver" in class_roles
-            )
     greeting = f"سلام {escape(message.from_user.first_name or '')} 👋\\n"
     greeting += (
         "به ClassMate خوش آمدی. تمام بخش‌ها را با دکمه‌های پایین صفحه باز کن.\\n"
@@ -246,16 +259,6 @@ async def start(message: Message, state: FSMContext):
     )
     if platform_admin:
         greeting += "\\n\\n🛡 پنل مدیر کل برای این حساب فعال است."
-    keyboard = (
-        main_reply_keyboard(
-            is_platform_admin=platform_admin,
-            is_school_admin=school_admin,
-            is_class_manager=class_manager,
-            is_approver=approver,
-        )
-        if message.chat.type == "private"
-        else None
-    )
     await message.answer(greeting, reply_markup=keyboard)
 
 
@@ -810,7 +813,19 @@ async def _start_wizard(
             else:
                 classes = await _classes_for_user(session, user)
     if not classes:
-        await bot.send_message(chat_id, "کلاسی برای این حساب پیدا نشد. با /join کد عضویت را وارد کن.")
+        async with SessionFactory() as session:
+            async with session.begin():
+                user = await session.scalar(select(User).where(User.telegram_id == from_user.id))
+                keyboard = (
+                    await _main_keyboard_for_user(session, user)
+                    if user and chat_id == from_user.id
+                    else None
+                )
+        await bot.send_message(
+            chat_id,
+            "کلاسی برای این حساب پیدا نشد. از دکمه «🔑 عضویت در کلاس» استفاده کن.",
+            reply_markup=keyboard,
+        )
         return
     await state.clear()
     await state.update_data(record_type=kind, source_chat_id=chat_id)
@@ -848,8 +863,16 @@ async def _choose_class_for_wizard(
         )
     else:
         if not subjects:
+            user = await session.scalar(select(User).where(User.telegram_id == chat_id))
+            keyboard = (
+                await _main_keyboard_for_user(session, user)
+                if user and chat_id > 0
+                else None
+            )
             await bot.send_message(
-                chat_id, "برای این کلاس هنوز درسی ثبت نشده است. مدیر کلاس باید /subject_add اجرا کند."
+                chat_id,
+                "برای این کلاس هنوز درسی ثبت نشده است. مدیر کلاس باید از پنل مدیریت، درس‌ها را اضافه کند.",
+                reply_markup=keyboard,
             )
             await state.clear()
             return
