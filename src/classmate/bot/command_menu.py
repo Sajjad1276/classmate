@@ -1,19 +1,15 @@
 from aiogram import Bot
 from aiogram.types import (
-    BotCommandScopeAllChatAdministrators,
+    BotCommand,
     BotCommandScopeAllGroupChats,
     BotCommandScopeAllPrivateChats,
-    BotCommandScopeDefault,
 )
 
 
 async def setup_command_menu(bot: Bot) -> None:
-    """Clear slash-command menus; the private UI is button-driven."""
-    scopes = (
-        BotCommandScopeDefault(),
-        BotCommandScopeAllPrivateChats(),
-        BotCommandScopeAllGroupChats(),
-        BotCommandScopeAllChatAdministrators(),
-    )
-    for scope in scopes:
-        await bot.delete_my_commands(scope=scope)
+    commands = [
+        BotCommand(command="start", description="باز کردن منوی ClassMate"),
+        BotCommand(command="help", description="راهنمای استفاده"),
+    ]
+    await bot.set_my_commands(commands, scope=BotCommandScopeAllPrivateChats())
+    await bot.set_my_commands(commands, scope=BotCommandScopeAllGroupChats())
