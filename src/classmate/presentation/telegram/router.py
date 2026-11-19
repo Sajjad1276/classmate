@@ -708,6 +708,18 @@ async def home_callback(callback: CallbackQuery, state: FSMContext) -> None:
     )
 
 
+@router.callback_query(F.data == "v2:join")
+async def join_start_callback(callback: CallbackQuery, state: FSMContext) -> None:
+    await _begin_flow(
+        callback,
+        state,
+        flow="join",
+        step="code",
+        prompt="کد دعوت کلاس را وارد کن. کد را از مدیر کلاس بگیر.",
+        back="v2:home",
+    )
+
+
 @router.callback_query(F.data.startswith("v2:classes:"))
 async def classes_callback(callback: CallbackQuery, state: FSMContext) -> None:
     action = callback.data.split(":")[2]
@@ -1143,6 +1155,8 @@ async def form_input(message: Message, state: FSMContext, bot: Bot) -> None:
     user = await _load_user_from_message(message, private=message.chat.type == "private")
     try:
         if flow == "join":
+            if step != "code":
+                raise DomainError("مرحله عضویت نامعتبر است؛ دوباره شروع کن.")
             async with SessionFactory() as session:
                 async with session.begin():
                     class_group = await join_class(session, user, value)
