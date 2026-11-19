@@ -1372,8 +1372,8 @@ async def _handle_panel_input(message: Message, state: FSMContext, bot: Bot) -> 
                         telegram_id = _parse_persian_int(telegram_raw)
                     school = await session.get(School, target_school_id)
                     target = await session.scalar(select(User).where(User.telegram_id == telegram_id))
-                    if not school or not school.is_active or not target:
-                        raise ValueError("مدرسه فعال یا کاربر پیدا نشد. کاربر باید ابتدا ربات را Start کرده باشد.")
+                    if not school or not school.is_active or not target or not target.is_active:
+                        raise ValueError("مدرسه فعال یا کاربر فعال پیدا نشد. کاربر باید ابتدا ربات را Start کرده باشد.")
                     membership = await session.scalar(
                         select(SchoolMembership).where(
                             SchoolMembership.school_id == target_school_id,
@@ -1461,8 +1461,8 @@ async def _handle_panel_input(message: Message, state: FSMContext, bot: Bot) -> 
                         telegram_id = _parse_persian_int(telegram_raw)
                     context = await get_class_with_school(session, target_class_id)
                     target = await session.scalar(select(User).where(User.telegram_id == telegram_id))
-                    if not context or not target:
-                        raise ValueError("کلاس یا کاربر پیدا نشد؛ کاربر باید ربات را Start کرده باشد.")
+                    if not context or not target or not target.is_active:
+                        raise ValueError("کلاس یا کاربر فعال پیدا نشد؛ کاربر باید ربات را Start کرده باشد.")
                     if not await is_school_admin(session, actor, context[2].id):
                         raise PermissionError("فقط مدیر مدرسه می‌تواند مدیر کلاس تعیین کند.")
                     membership = await session.scalar(
@@ -1494,10 +1494,10 @@ async def _handle_panel_input(message: Message, state: FSMContext, bot: Bot) -> 
                     )
                     if not actor.is_platform_admin and not await is_school_admin(session, actor, school.id) and manager is None:
                         raise PermissionError("مجوز مدیریت این کلاس را نداری.")
-                    telegram_id = int(raw)
+                    telegram_id = _parse_persian_int(raw)
                     target = await session.scalar(select(User).where(User.telegram_id == telegram_id))
-                    if not target:
-                        raise ValueError("این کاربر باید ابتدا ربات را در خصوصی Start کند.")
+                    if not target or not target.is_active:
+                        raise ValueError("کاربر فعال پیدا نشد؛ کاربر باید ابتدا ربات را Start کند.")
                     membership = await session.scalar(
                         select(ClassMembership).where(
                             ClassMembership.class_id == class_id,
@@ -1506,10 +1506,13 @@ async def _handle_panel_input(message: Message, state: FSMContext, bot: Bot) -> 
                     )
                     if membership is None:
                         session.add(ClassMembership(class_id=class_id, user_id=target.id, role="trusted_approver"))
+                        result_text = "✅ فرد مورد اعتماد به این کلاس اضافه شد."
+                    elif membership.role == "class_manager" and membership.is_active:
+                        result_text = "ℹ️ این کاربر از قبل مدیر کلاس است و مجوز بررسی دارد."
                     else:
                         membership.role = "trusted_approver"
                         membership.is_active = True
-                    result_text = "✅ فرد مورد اعتماد به این کلاس اضافه شد."
+                        result_text = "✅ فرد مورد اعتماد به این کلاس اضافه شد."
                 elif form_name == "subject_add":
                     if class_id is None:
                         raise ValueError("شناسه کلاس مشخص نیست.")
@@ -1545,8 +1548,8 @@ async def _handle_panel_input(message: Message, state: FSMContext, bot: Bot) -> 
                         starts_at = ends_at = None
                     else:
                         start_raw, end_raw = time_range.split("-", 1)
-                        sh, sm = (int(part) for part in start_raw.split(":"))
-                        eh, em = (int(part) for part in end_raw.split(":"))
+                        sh, sm = (_parse_persian_int(part) for part in start_raw.split(":"))
+                        eh, em = (_parse_persian_int(part) for part in end_raw.split(":"))
                         starts_at, ends_at = time(sh, sm), time(eh, em)
                         if starts_at >= ends_at:
                             raise ValueError("ساعت پایان باید بعد از ساعت شروع باشد.")
