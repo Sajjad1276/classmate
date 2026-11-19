@@ -91,6 +91,7 @@ def main_reply_keyboard(
         [KeyboardButton(text="📚 تکالیف"), KeyboardButton(text="📝 امتحانات")],
         [KeyboardButton(text="📅 برنامه هفتگی"), KeyboardButton(text="🗒 گزارش امروز")],
         [KeyboardButton(text="🔎 جست‌وجو"), KeyboardButton(text="🔔 یادآوری")],
+        [KeyboardButton(text="ℹ️ راهنمای استفاده")],
     ]
     if is_approver:
         rows.append([KeyboardButton(text="🕓 صف بررسی")])
