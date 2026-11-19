@@ -668,16 +668,26 @@ async def _show_school_management(
             school_name = school.name
             group_id = school.telegram_group_id
             group_title = school.telegram_group_title
-    group_status = (
-        f"🟢 گروه مرکزی متصل: {escape(group_title or str(group_id))}"
-        if group_id is not None
-        else "🔴 گروه مرکزی هنوز متصل نشده است."
+            link_expires_at = school.group_link_token_expires_at
+    link_is_pending = (
+        link_expires_at is not None
+        and link_expires_at > datetime.now(ZoneInfo("UTC"))
     )
-    group_action = (
-        _button("🔄 تغییر گروه مرکزی", f"ui:school_group_reset_confirm:{school_id}")
-        if group_id is not None
-        else _button("🔗 ساخت لینک اتصال گروه", f"ui:school_group_link:{school_id}")
-    )
+    if group_id is not None:
+        group_status = f"🟢 گروه مرکزی متصل: {escape(group_title or str(group_id))}"
+        group_action = _button(
+            "🔄 تغییر گروه مرکزی", f"ui:school_group_reset_confirm:{school_id}"
+        )
+    elif link_is_pending:
+        group_status = "🕓 لینک اتصال صادر شده و تا ۲۴ ساعت معتبر است."
+        group_action = _button(
+            "📨 ارسال لینک تازه", f"ui:school_group_link:{school_id}"
+        )
+    else:
+        group_status = "🔴 گروه مرکزی هنوز متصل نشده است."
+        group_action = _button(
+            "🔗 ساخت لینک اتصال گروه", f"ui:school_group_link:{school_id}"
+        )
     rows = [
         [group_action],
         [_button("📅 ایجاد سال تحصیلی", f"ui:form:year_new:{school_id}")],
@@ -1080,6 +1090,7 @@ async def school_management_panel(callback: CallbackQuery, state: FSMContext):
 
 async def _issue_school_group_link(
     callback: CallbackQuery,
+    state: FSMContext,
     school_id: int,
     *,
     replace_existing: bool = False,
@@ -1139,11 +1150,11 @@ async def _issue_school_group_link(
         "این لینک یک‌بارمصرف است و تا ۲۴ ساعت اعتبار دارد. ربات را در گروه مدیر کن و لینک را از داخل همان گروه اجرا کن.",
         reply_markup=keyboard,
     )
-    await callback.answer("لینک اتصال برایت ارسال شد.")
+    await _show_school_management(callback, state, school_id)
 
 
 @router.callback_query(F.data.startswith("ui:school_group_link:"))
-async def school_group_link(callback: CallbackQuery):
+async def school_group_link(callback: CallbackQuery, state: FSMContext):
     try:
         school_id = int(callback.data.rsplit(":", 1)[1])
         if school_id < 1:
@@ -1151,7 +1162,7 @@ async def school_group_link(callback: CallbackQuery):
     except (TypeError, ValueError):
         await callback.answer("شناسه مدرسه نامعتبر است.", show_alert=True)
         return
-    await _issue_school_group_link(callback, school_id)
+    await _issue_school_group_link(callback, state, school_id)
 
 
 @router.callback_query(F.data.startswith("ui:school_group_reset_confirm:"))
@@ -1185,7 +1196,7 @@ async def school_group_reset_confirm(callback: CallbackQuery, state: FSMContext)
 
 
 @router.callback_query(F.data.startswith("ui:school_group_reset_do:"))
-async def school_group_reset_do(callback: CallbackQuery):
+async def school_group_reset_do(callback: CallbackQuery, state: FSMContext):
     try:
         school_id = int(callback.data.rsplit(":", 1)[1])
         if school_id < 1:
@@ -1193,7 +1204,7 @@ async def school_group_reset_do(callback: CallbackQuery):
     except (TypeError, ValueError):
         await callback.answer("شناسه مدرسه نامعتبر است.", show_alert=True)
         return
-    await _issue_school_group_link(callback, school_id, replace_existing=True)
+    await _issue_school_group_link(callback, state, school_id, replace_existing=True)
 
 
 @router.callback_query(F.data == "ui:school_admin_schools")
