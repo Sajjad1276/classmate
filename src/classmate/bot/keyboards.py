@@ -1,4 +1,9 @@
-from aiogram.types import InlineKeyboardButton, InlineKeyboardMarkup
+from aiogram.types import (
+    InlineKeyboardButton,
+    InlineKeyboardMarkup,
+    KeyboardButton,
+    ReplyKeyboardMarkup,
+)
 
 from classmate.db.models import ClassGroup, Subject
 
@@ -68,4 +73,44 @@ def approval_keyboard(entity_type: str, entity_id: int) -> InlineKeyboardMarkup:
                 ),
             ]
         ]
+    )
+
+
+
+def main_reply_keyboard(
+    *,
+    is_platform_admin: bool = False,
+    is_school_admin: bool = False,
+    is_class_manager: bool = False,
+    is_approver: bool = False,
+) -> ReplyKeyboardMarkup:
+    """Persistent, role-aware private-chat home keyboard."""
+    rows = [
+        [KeyboardButton(text="🏫 کلاس‌های من"), KeyboardButton(text="🔑 عضویت در کلاس")],
+        [KeyboardButton(text="➕ ثبت اطلاعات")],
+        [KeyboardButton(text="📚 تکالیف"), KeyboardButton(text="📝 امتحانات")],
+        [KeyboardButton(text="📅 برنامه هفتگی"), KeyboardButton(text="🗒 گزارش امروز")],
+        [KeyboardButton(text="🔎 جست‌وجو"), KeyboardButton(text="🔔 یادآوری")],
+    ]
+    if is_approver:
+        rows.append([KeyboardButton(text="🕓 صف بررسی")])
+    if is_class_manager:
+        rows.append([KeyboardButton(text="⚙️ مدیریت کلاس")])
+    if is_school_admin:
+        rows.append([KeyboardButton(text="🏢 مدیریت مدرسه")])
+    if is_platform_admin:
+        rows.append([KeyboardButton(text="🛡 پنل مدیر کل")])
+    return ReplyKeyboardMarkup(
+        keyboard=rows,
+        resize_keyboard=True,
+        is_persistent=True,
+        input_field_placeholder="از دکمه‌های منو استفاده کن",
+    )
+
+
+def wizard_cancel_keyboard() -> ReplyKeyboardMarkup:
+    return ReplyKeyboardMarkup(
+        keyboard=[[KeyboardButton(text="❌ لغو عملیات")]],
+        resize_keyboard=True,
+        is_persistent=True,
     )
