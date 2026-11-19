@@ -157,7 +157,7 @@ async def add_subject(
         session.add(subject)
         await session.flush()
     elif subject.deleted_at is not None:
-        subject.deleted_at = None
+        raise ValueError("این درس توسط مدیر مدرسه آرشیو شده است؛ مدیر مدرسه باید آن را بازیابی کند.")
     link = await session.scalar(
         select(ClassSubject).where(
             ClassSubject.class_id == class_id, ClassSubject.subject_id == subject.id
@@ -393,6 +393,29 @@ async def soft_delete_subject(session: AsyncSession, subject_id: int) -> bool:
         link.deleted_at = now
     for entry in timetable:
         entry.deleted_at = now
+    return True
+
+
+async def restore_subject(session: AsyncSession, subject_id: int) -> bool:
+    """Restore a school-wide archived subject and its class links/timetable slots."""
+    subject = await session.get(Subject, subject_id, with_for_update=True)
+    if subject is None or subject.deleted_at is None:
+        return False
+    subject.deleted_at = None
+    links = (
+        await session.execute(
+            select(ClassSubject).where(ClassSubject.subject_id == subject_id)
+        )
+    ).scalars().all()
+    timetable = (
+        await session.execute(
+            select(TimetableEntry).where(TimetableEntry.subject_id == subject_id)
+        )
+    ).scalars().all()
+    for link in links:
+        link.deleted_at = None
+    for entry in timetable:
+        entry.deleted_at = None
     return True
 
 
