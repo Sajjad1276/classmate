@@ -4,7 +4,7 @@ from sqlalchemy import func, select
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from classmate.application.access import require_class_role
-from classmate.db.models import AcademicYear, ClassGroup, School
+from classmate.db.models import AcademicYear, ClassGroup, School, User
 from classmate.domain.enums import Role
 from classmate.domain.errors import Conflict, NotFound
 from classmate.services.permissions import hash_code
