@@ -1,7 +1,11 @@
 from datetime import datetime, timezone
 from types import SimpleNamespace
 
-from classmate.worker.main import has_active_lease
+from classmate.worker.main import (
+    MAX_ATTEMPTS,
+    has_active_lease,
+    stale_lease_recovery_status,
+)
 
 
 def test_reminder_job_accepts_its_current_lease():
@@ -24,3 +28,12 @@ def test_reminder_job_rejects_non_processing_state_even_when_token_matches():
     job = SimpleNamespace(status="sent", locked_at=token)
 
     assert not has_active_lease(job, token)
+
+
+
+def test_expired_lease_retries_below_max_attempts():
+    assert stale_lease_recovery_status(MAX_ATTEMPTS - 1) == "retry"
+
+
+def test_expired_lease_fails_at_max_attempts():
+    assert stale_lease_recovery_status(MAX_ATTEMPTS) == "failed"
