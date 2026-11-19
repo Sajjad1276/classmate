@@ -1,4 +1,4 @@
-from datetime import date, datetime, time
+from datetime import date, datetime, time, timedelta
 from zoneinfo import ZoneInfo
 
 import jdatetime
@@ -51,3 +51,36 @@ def jalali_datetime(value: datetime, timezone_name: str) -> str:
 def persian_weekday(value: date) -> int:
     """Return 0=Saturday .. 6=Friday."""
     return (value.weekday() + 2) % 7
+
+
+def next_timetable_occurrence(
+    now: datetime,
+    weekday: int,
+    starts_at: time | None = None,
+    ends_at: time | None = None,
+    valid_from: date | None = None,
+    valid_until: date | None = None,
+) -> tuple[datetime, datetime | None] | None:
+    """Find the next future class occurrence without mutating the search base date."""
+    if now.tzinfo is None:
+        raise ValueError("now must be timezone-aware")
+    if weekday not in range(7):
+        raise ValueError("weekday must be between 0 (Saturday) and 6 (Friday)")
+    search_start = max(now.date(), valid_from or date.min)
+    if valid_until is not None and search_start > valid_until:
+        return None
+    for offset in range(14):
+        lesson_date = search_start + timedelta(days=offset)
+        if valid_until is not None and lesson_date > valid_until:
+            return None
+        if persian_weekday(lesson_date) != weekday:
+            continue
+        lesson_start = datetime.combine(lesson_date, starts_at or time(8, 0), tzinfo=now.tzinfo)
+        if lesson_start <= now:
+            continue
+        lesson_end = (
+            datetime.combine(lesson_date, ends_at, tzinfo=now.tzinfo)
+            if ends_at is not None else None
+        )
+        return lesson_start, lesson_end
+    return None
