@@ -1545,10 +1545,26 @@ async def _handle_record_input(
 async def cancel_flow_callback(callback: CallbackQuery, state: FSMContext) -> None:
     data = await state.get_data()
     class_id = data.get("class_id")
+    back = data.get("form_back", "v2:home")
     await state.clear()
     user = await _load_user_from_callback(callback)
     if class_id:
         await _show_class_dashboard(callback, state, user, int(class_id))
+    elif back == "v2:platform":
+        if not user.is_platform_admin:
+            await callback.answer("این پنل فقط برای مدیر کل است.", show_alert=True)
+            return
+        rows = [
+            [button("➕ ایجاد مدرسه و سال تحصیلی", "v2:school:create")],
+            [button("🏢 فهرست مدرسه‌ها", "v2:schools:manage")],
+        ]
+        await _edit(callback, state, "🛡 <b>پنل مدیر کل</b>", menu(rows))
+    elif back.startswith("v2:school:open:"):
+        try:
+            school_id = int(back.rsplit(":", 1)[1])
+            await _show_school_panel(callback, state, user, school_id)
+        except (ValueError, DomainError) as exc:
+            await callback.answer(str(exc), show_alert=True)
     else:
         await home_callback(callback, state)
 
