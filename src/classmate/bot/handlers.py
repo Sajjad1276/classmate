@@ -68,6 +68,7 @@ from classmate.services.records import (
     reject_record,
     list_daily_summary,
     list_current_timetable,
+    get_record_submitter_telegram_id,
 )
 
 router = Router(name="classmate")
@@ -1388,6 +1389,9 @@ async def approval_callback(callback: CallbackQuery, bot: Bot):
             if not await can_approve(session, user, class_group.id):
                 await callback.answer("فقط افراد مورد اعتماد می‌توانند تأیید کنند.", show_alert=True)
                 return
+            submitter_telegram_id = await get_record_submitter_telegram_id(
+                session, entity_type, entity_id, class_group.id
+            )
             if action == "approve":
                 success, result_text = await approve_record(
                     session, entity_type, entity_id, user.id, school.id,
@@ -1404,17 +1408,50 @@ async def approval_callback(callback: CallbackQuery, bot: Bot):
             await callback.message.edit_reply_markup(reply_markup=None)
         except Exception:
             pass
-        if action == "approve":
-            await bot.send_message(
-                class_group.group_chat_id,
-                f"✅ <b>اطلاعات تأیید شد</b>\nنوع: {entity_type}\nشناسه: {entity_id}\n"
-                "این مورد اکنون در جست‌وجو و فهرست اطلاعات کلاس قابل مشاهده است."
-            )
-        else:
-            await bot.send_message(
-                class_group.group_chat_id,
-                f"❌ درخواست {entity_type} با شناسه {entity_id} رد شد."
-            )
+
+        entity_labels = {
+            "homework": "تکلیف",
+            "exam": "امتحان",
+            "report": "گزارش روزانه",
+        }
+        entity_label = entity_labels[entity_type]
+        if class_group.group_chat_id:
+            try:
+                if action == "approve":
+                    await bot.send_message(
+                        class_group.group_chat_id,
+                        f"✅ <b>{entity_label} تأیید شد</b>\\n"
+                        "این مورد اکنون در فهرست اطلاعات قطعی کلاس قابل مشاهده است."
+                    )
+                else:
+                    await bot.send_message(
+                        class_group.group_chat_id,
+                        f"❌ {entity_label} ثبت‌شده رد شد."
+                    )
+            except Exception:
+                logger.exception(
+                    "Failed to notify group %s after review of %s #%s",
+                    class_group.group_chat_id, entity_type, entity_id,
+                )
+        if submitter_telegram_id is not None:
+            try:
+                if action == "approve":
+                    submitter_message = (
+                        f"✅ {entity_label} ثبت‌شدهٔ تو تأیید شد. "
+                        "اکنون در اطلاعات قطعی کلاس نمایش داده می‌شود."
+                    )
+                else:
+                    submitter_message = (
+                        f"❌ {entity_label} ثبت‌شدهٔ تو رد شد. "
+                        "برای جزئیات بیشتر با مدیر کلاس تماس بگیر."
+                    )
+                await bot.send_message(submitter_telegram_id, submitter_message)
+            except Exception:
+                logger.info(
+                    "Could not privately notify submitter %s about %s #%s",
+                    submitter_telegram_id, entity_type, entity_id,
+                    exc_info=True,
+                )
 
 
 @router.message(Command("pending"))
