@@ -59,6 +59,38 @@ async def get_subject(
 
 
 
+def next_timetable_occurrence(
+    entry: TimetableEntry,
+    now: datetime,
+) -> tuple[datetime, datetime | None] | None:
+    """Resolve the next valid weekly occurrence, including future valid_from dates."""
+    if now.tzinfo is None:
+        raise ValueError("The reference time must be timezone-aware.")
+
+    first_date = now.date()
+    if entry.valid_from and entry.valid_from > first_date:
+        first_date = entry.valid_from
+
+    for offset in range(8):
+        lesson_date = first_date + timedelta(days=offset)
+        if entry.valid_until and lesson_date > entry.valid_until:
+            return None
+        if persian_weekday(lesson_date) != entry.weekday:
+            continue
+        lesson_start = datetime.combine(
+            lesson_date, entry.starts_at or time(8, 0), tzinfo=now.tzinfo
+        )
+        if lesson_start <= now:
+            continue
+        lesson_end = (
+            datetime.combine(lesson_date, entry.ends_at, tzinfo=now.tzinfo)
+            if entry.ends_at
+            else None
+        )
+        return lesson_start, lesson_end
+    return None
+
+
 async def get_or_create_next_lesson(
     session: AsyncSession,
     class_id: int,
@@ -77,28 +109,11 @@ async def get_or_create_next_lesson(
         )
     ).scalars().all()
 
-    occurrences: list[tuple[datetime, datetime | None]] = []
-    for entry in entries:
-        for offset in range(15):
-            lesson_date = now.date() + timedelta(days=offset)
-            if persian_weekday(lesson_date) != entry.weekday:
-                continue
-            if entry.valid_from and lesson_date < entry.valid_from:
-                continue
-            if entry.valid_until and lesson_date > entry.valid_until:
-                continue
-            lesson_start = datetime.combine(
-                lesson_date, entry.starts_at or time(8, 0), tzinfo=zone
-            )
-            if lesson_start <= now:
-                continue
-            lesson_end = (
-                datetime.combine(lesson_date, entry.ends_at, tzinfo=zone)
-                if entry.ends_at
-                else None
-            )
-            occurrences.append((lesson_start, lesson_end))
-            break
+    occurrences = [
+        occurrence
+        for entry in entries
+        if (occurrence := next_timetable_occurrence(entry, now)) is not None
+    ]
 
     if not occurrences:
         return None
