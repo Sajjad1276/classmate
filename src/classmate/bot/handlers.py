@@ -64,7 +64,6 @@ from classmate.services.records import (
     list_homework,
     list_homework_for_lesson,
     list_pending_records,
-    list_reports,
     normalize_subject_name,
     reject_record,
     list_daily_summary,
