@@ -194,8 +194,8 @@ async def test_soft_delete_subject_cascades_to_links_and_can_be_restored(db_sess
 
     assert await restore_subject(db_session, subject.id)
     assert subject.deleted_at is None
-    assert first_link.deleted_at == class_level_deleted_at
-    assert first_entry.deleted_at == class_level_deleted_at
+    assert same_utc_instant(first_link.deleted_at, class_level_deleted_at)
+    assert same_utc_instant(first_entry.deleted_at, class_level_deleted_at)
     assert second_link.deleted_at is None
     assert second_entry.deleted_at is None
     assert await get_subject(db_session, class_group.id, school.id, "Mathematics") is None
