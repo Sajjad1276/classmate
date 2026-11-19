@@ -613,7 +613,11 @@ async def subject_add_command(message: Message):
             if not subject_name:
                 await message.answer("نام درس را وارد کن.")
                 return
-            subject = await add_subject(session, class_group.id, school.id, subject_name)
+            try:
+                subject = await add_subject(session, class_group.id, school.id, subject_name)
+            except ValueError as exc:
+                await message.answer(str(exc))
+                return
             subject_id = subject.id
     await message.answer(f"✅ درس «{escape(subject_name)}» به کلاس اضافه شد. (شناسه {subject_id})")
 
