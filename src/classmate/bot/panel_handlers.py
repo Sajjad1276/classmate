@@ -664,7 +664,11 @@ async def _show_form(
         await _create_class_codes(callback, state, class_id or 0)
         return
     await state.set_state(PanelInput.input)
-    await state.update_data(panel_form=form_name, panel_class_id=class_id)
+    await state.update_data(
+        panel_form=form_name,
+        panel_class_id=class_id,
+        **({"school_name": None} if form_name == "school_new" else {}),
+    )
     await _render_from_callback(
         callback,
         state,
@@ -968,7 +972,10 @@ async def cancel_input(callback: CallbackQuery, state: FSMContext):
     form_name = data.get("panel_form")
     class_id = data.get("panel_class_id")
     await state.set_state(None)
-    await state.update_data(panel_form=None)
+    await state.update_data(
+        panel_form=None,
+        **({"school_name": None} if form_name == "school_new" else {}),
+    )
     parent = _parent_for_form(form_name or "", class_id)
     await callback.answer("عملیات لغو شد.")
     if parent == "ui:platform":
