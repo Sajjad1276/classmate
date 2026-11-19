@@ -7,6 +7,7 @@ from aiogram.enums import ParseMode
 from aiogram.fsm.storage.memory import MemoryStorage
 
 from classmate.bot.command_menu import setup_command_menu
+from classmate.bot.panel_handlers import router as panel_router
 from classmate.bot.handlers import router
 from classmate.core.config import get_settings
 from classmate.core.logging import configure_logging
@@ -26,6 +27,7 @@ async def main() -> None:
     )
     await setup_command_menu(bot)
     dispatcher = Dispatcher(storage=MemoryStorage())
+    dispatcher.include_router(panel_router)
     dispatcher.include_router(router)
     logging.getLogger(__name__).info("Starting ClassMate bot polling")
     try:
