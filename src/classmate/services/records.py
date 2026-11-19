@@ -1,4 +1,4 @@
-from datetime import date, datetime, time, timedelta
+from datetime import date, datetime, time, timedelta, timezone
 from zoneinfo import ZoneInfo
 
 from sqlalchemy import select
@@ -19,7 +19,8 @@ from classmate.db.models import (
     Subject,
     TimetableEntry,
 )
-from classmate.domain.dates import persian_weekday
+from classmate.domain.dates import next_timetable_occurrence
+from classmate.domain.enums import LessonStatus, RecordStatus, ReminderStatus
 
 
 def normalize_subject_name(value: str) -> str:
@@ -52,6 +53,8 @@ async def get_subject(
         .join(ClassSubject, ClassSubject.subject_id == Subject.id)
         .where(
             ClassSubject.class_id == class_id,
+            ClassSubject.deleted_at.is_(None),
+            Subject.deleted_at.is_(None),
             Subject.school_id == school_id,
             Subject.normalized_name == normalized,
         )
@@ -73,32 +76,23 @@ async def get_or_create_next_lesson(
             select(TimetableEntry).where(
                 TimetableEntry.class_id == class_id,
                 TimetableEntry.subject_id == subject_id,
+                TimetableEntry.deleted_at.is_(None),
             )
         )
     ).scalars().all()
 
     occurrences: list[tuple[datetime, datetime | None]] = []
     for entry in entries:
-        for offset in range(15):
-            lesson_date = now.date() + timedelta(days=offset)
-            if persian_weekday(lesson_date) != entry.weekday:
-                continue
-            if entry.valid_from and lesson_date < entry.valid_from:
-                continue
-            if entry.valid_until and lesson_date > entry.valid_until:
-                continue
-            lesson_start = datetime.combine(
-                lesson_date, entry.starts_at or time(8, 0), tzinfo=zone
-            )
-            if lesson_start <= now:
-                continue
-            lesson_end = (
-                datetime.combine(lesson_date, entry.ends_at, tzinfo=zone)
-                if entry.ends_at
-                else None
-            )
-            occurrences.append((lesson_start, lesson_end))
-            break
+        occurrence = next_timetable_occurrence(
+            now=now,
+            weekday=entry.weekday,
+            starts_at=entry.starts_at,
+            ends_at=entry.ends_at,
+            valid_from=entry.valid_from,
+            valid_until=entry.valid_until,
+        )
+        if occurrence is not None:
+            occurrences.append(occurrence)
 
     if not occurrences:
         return None
@@ -119,7 +113,7 @@ async def get_or_create_next_lesson(
         subject_id=subject_id,
         starts_at=starts_at,
         ends_at=ends_at,
-        status="scheduled",
+        status=LessonStatus.SCHEDULED,
     )
     session.add(lesson)
     await session.flush()
@@ -137,7 +131,7 @@ async def list_homework_for_lesson(
                 .where(
                     Homework.class_id == class_id,
                     Homework.subject_id == subject_id,
-                    Homework.status == "APPROVED",
+                    Homework.status == RecordStatus.APPROVED,
                     (Homework.due_session_id == lesson.id)
                     | (Homework.due_on == lesson.starts_at.date()),
                 )
@@ -161,6 +155,8 @@ async def add_subject(
         subject = Subject(school_id=school_id, name=name.strip(), normalized_name=normalized)
         session.add(subject)
         await session.flush()
+    elif subject.deleted_at is not None:
+        subject.deleted_at = None
     link = await session.scalar(
         select(ClassSubject).where(
             ClassSubject.class_id == class_id, ClassSubject.subject_id == subject.id
@@ -168,6 +164,8 @@ async def add_subject(
     )
     if link is None:
         session.add(ClassSubject(class_id=class_id, subject_id=subject.id))
+    elif link.deleted_at is not None:
+        link.deleted_at = None
     await session.flush()
     return subject
 
@@ -190,7 +188,7 @@ async def create_homework(
         due_on=due_on,
         due_session_id=due_session_id,
         created_by=created_by,
-        status="PENDING",
+        status=RecordStatus.PENDING,
     )
     session.add(record)
     await session.flush()
@@ -286,11 +284,11 @@ async def approve_record(
     record = await session.get(model, entity_id, with_for_update=True)
     if record is None or record.class_id != class_id:
         return False, "اطلاعات پیدا نشد."
-    if record.status != "PENDING":
+    if record.status != RecordStatus.PENDING:
         return False, f"این مورد در وضعیت {record.status} است و قابل تأیید نیست."
     if record.created_by == actor_id:
         return False, "ثبت‌کننده اجازه تأیید درخواست خودش را ندارد."
-    record.status = "APPROVED"
+    record.status = RecordStatus.APPROVED
     record.approved_by = actor_id
     record.approved_at = datetime.now(ZoneInfo(timezone_name))
     session.add(
@@ -298,12 +296,12 @@ async def approve_record(
             entity_type=entity_type,
             entity_id=entity_id,
             actor_id=actor_id,
-            action="APPROVED",
+            action=RecordStatus.APPROVED,
         )
     )
     await audit(
         session, school_id, class_id, actor_id, "approve", entity_type, entity_id,
-        {"status": "APPROVED"},
+        {"status": RecordStatus.APPROVED.value},
     )
     await session.flush()
     if entity_type in {"homework", "exam"}:
@@ -332,20 +330,93 @@ async def reject_record(
     record = await session.get(model, entity_id, with_for_update=True)
     if record is None or record.class_id != class_id:
         return False, "اطلاعات پیدا نشد."
-    if record.status not in {"PENDING", "REVISION_REQUESTED"}:
+    if record.status != RecordStatus.PENDING:
         return False, "این مورد در وضعیت قابل رد نیست."
-    record.status = "REJECTED"
+    record.status = RecordStatus.REJECTED
     session.add(
         ApprovalEvent(
             entity_type=entity_type, entity_id=entity_id, actor_id=actor_id,
-            action="REJECTED", note=note,
+            action=RecordStatus.REJECTED, note=note,
         )
     )
     await audit(
         session, school_id, class_id, actor_id, "reject", entity_type, entity_id,
-        {"status": "REJECTED", "note": note},
+        {"status": RecordStatus.REJECTED.value, "note": note},
     )
     return True, "درخواست رد شد."
+
+
+async def cancel_approved_record(
+    session: AsyncSession,
+    entity_type: str,
+    entity_id: int,
+    actor_id: int,
+    school_id: int,
+    class_id: int,
+) -> tuple[bool, str]:
+    """Cancel an approved class record; authorization is enforced by the caller."""
+    model_map = {"homework": Homework, "exam": Exam, "report": DailyReport}
+    model = model_map.get(entity_type)
+    if model is None:
+        return False, "نوع اطلاعات پشتیبانی نمی‌شود."
+    record = await session.get(model, entity_id, with_for_update=True)
+    if record is None or record.class_id != class_id:
+        return False, "اطلاعات پیدا نشد."
+    if record.status != RecordStatus.APPROVED:
+        return False, "فقط اطلاعات تأییدشده قابل لغو است."
+    before = {"status": record.status}
+    record.status = RecordStatus.CANCELLED
+    if hasattr(record, "cancelled_at"):
+        record.cancelled_at = datetime.now(timezone.utc)
+    session.add(ApprovalEvent(
+        entity_type=entity_type, entity_id=entity_id, actor_id=actor_id,
+        action=RecordStatus.CANCELLED.value, note="لغو توسط فرد دارای مجوز",
+    ))
+    await audit(
+        session, school_id, class_id, actor_id, "cancel", entity_type, entity_id,
+        {"status": RecordStatus.CANCELLED.value}, before,
+    )
+    await set_reminders_cancelled(session, entity_type, entity_id)
+    return True, "اطلاعات لغو شد و یادآوری‌های زمان‌بندی‌شده آن نیز غیرفعال شدند."
+
+
+async def soft_delete_subject(session: AsyncSession, subject_id: int) -> bool:
+    subject = await session.get(Subject, subject_id, with_for_update=True)
+    if subject is None or subject.deleted_at is not None:
+        return False
+    now = datetime.now(timezone.utc)
+    subject.deleted_at = now
+    links = (await session.execute(select(ClassSubject).where(ClassSubject.subject_id == subject_id))).scalars().all()
+    timetable = (await session.execute(select(TimetableEntry).where(TimetableEntry.subject_id == subject_id))).scalars().all()
+    for link in links:
+        link.deleted_at = now
+    for entry in timetable:
+        entry.deleted_at = now
+    return True
+
+
+async def soft_delete_class_subject(session: AsyncSession, class_id: int, subject_id: int) -> bool:
+    link = await session.scalar(select(ClassSubject).where(
+        ClassSubject.class_id == class_id, ClassSubject.subject_id == subject_id
+    ).with_for_update())
+    if link is None or link.deleted_at is not None:
+        return False
+    now = datetime.now(timezone.utc)
+    link.deleted_at = now
+    entries = (await session.execute(select(TimetableEntry).where(
+        TimetableEntry.class_id == class_id, TimetableEntry.subject_id == subject_id
+    ))).scalars().all()
+    for entry in entries:
+        entry.deleted_at = now
+    return True
+
+
+async def soft_delete_timetable_entry(session: AsyncSession, entry_id: int) -> bool:
+    entry = await session.get(TimetableEntry, entry_id, with_for_update=True)
+    if entry is None or entry.deleted_at is not None:
+        return False
+    entry.deleted_at = datetime.now(timezone.utc)
+    return True
 
 
 async def list_homework(
@@ -369,7 +440,11 @@ async def list_exams(session: AsyncSession, class_id: int) -> list[tuple[Exam, S
             await session.execute(
                 select(Exam, Subject)
                 .join(Subject, Exam.subject_id == Subject.id)
-                .where(Exam.class_id == class_id, Exam.status == "APPROVED")
+                .where(
+                    Exam.class_id == class_id,
+                    Exam.status == RecordStatus.APPROVED,
+                    Subject.deleted_at.is_(None),
+                )
                 .order_by(Exam.scheduled_at.asc())
                 .limit(30)
             )
@@ -385,7 +460,7 @@ async def list_reports(session: AsyncSession, class_id: int, report_date: date):
                 .where(
                     DailyReport.class_id == class_id,
                     DailyReport.report_date == report_date,
-                    DailyReport.status == "APPROVED",
+                    DailyReport.status == RecordStatus.APPROVED,
                 )
                 .order_by(DailyReport.created_at.desc())
             )
@@ -414,9 +489,9 @@ async def set_reminders_cancelled(
             select(ReminderJob).where(
                 ReminderJob.entity_type == entity_type,
                 ReminderJob.entity_id == entity_id,
-                ReminderJob.status.in_(["pending", "retry"]),
+                ReminderJob.status.in_([ReminderStatus.PENDING, ReminderStatus.RETRY]),
             )
         )
     ).scalars().all()
     for job in jobs:
-        job.status = "cancelled"
+        job.status = ReminderStatus.CANCELLED
