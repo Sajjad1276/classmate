@@ -21,9 +21,11 @@ from classmate.application.access import (
 )
 from classmate.application.classrooms import (
     add_subject,
+    assign_class_manager,
     issue_member_invite,
     join_class,
     list_subjects,
+    set_timetable_slot,
 )
 from classmate.application.groups import (
     bind_class_group,
@@ -35,6 +37,7 @@ from classmate.application.records import (
     create_daily_report,
     create_exam,
     create_homework,
+    cancel_record,
     get_daily_summary,
     list_exams,
     list_homework,
@@ -44,6 +47,8 @@ from classmate.application.records import (
 from classmate.application.reminders import set_preference
 from classmate.application.schools import (
     bind_school_group,
+    assign_school_admin,
+    create_academic_year,
     create_class,
     create_school,
     issue_school_group_link,
@@ -73,7 +78,7 @@ from classmate.domain.dates import (
 )
 from classmate.domain.enums import RecordType, Role
 from classmate.domain.errors import DomainError, Forbidden
-from classmate.domain.text import normalize_name
+from classmate.domain.text import normalize_name, parse_positive_int
 from classmate.presentation.telegram.formatting import html
 from classmate.presentation.telegram.keyboards import (
     class_dashboard,
@@ -1090,24 +1095,32 @@ async def school_callback(callback: CallbackQuery, state: FSMContext) -> None:
                 ).all()
             )
     rows = [
-        [button("➕ ایجاد کلاس در سال جاری", f"v2:school:create_class:{school_id}")]
+        [button("➕ ایجاد سال تحصیلی", f"v2:school:create_year:{school_id}")],
+        [button("➕ تعیین مدیر مدرسه", f"v2:school:assign_admin:{school_id}")]
+        if user.is_platform_admin else [],
     ]
+    rows = [row for row in rows if row]
     if years:
-        rows.extend(
-            [[button(f"📅 {year.name}{' (جاری)' if year.is_current else ''}", "v2:noop")]
-             for year in years]
-        )
+        rows.extend([
+            [button(
+                f"🏫 ساخت کلاس در {year.name}{' · جاری' if year.is_current else ''}",
+                f"v2:school:create_class:{school_id}:{year.id}",
+            )]
+            for year in years
+        ])
     rows.append([button("🔗 اتصال گروه مرکزی", f"v2:school:grouplink:{school_id}")])
     await _edit(
         callback,
         state,
-        f"🏢 <b>{html(school.name)}</b>\nمنطقه زمانی: {html(school.timezone)}",
+        f"🏢 <b>{html(school.name)}</b>\n"
+        f"منطقه زمانی: {html(school.timezone)}\n"
+        f"تعداد سال‌های تحصیلی: {len(years)}",
         menu(rows, "v2:schools:manage"),
     )
 
 
-@router.callback_query(F.data.startswith("v2:school:create_class:"))
-async def school_create_class_callback(callback: CallbackQuery, state: FSMContext) -> None:
+@router.callback_query(F.data.startswith("v2:school:create_year:"))
+async def school_create_year_callback(callback: CallbackQuery, state: FSMContext) -> None:
     try:
         school_id = int(callback.data.rsplit(":", 1)[1])
     except ValueError:
@@ -1116,15 +1129,72 @@ async def school_create_class_callback(callback: CallbackQuery, state: FSMContex
     user = await _load_user_from_callback(callback)
     async with SessionFactory() as session:
         async with session.begin():
-            year = await session.scalar(
-                select(AcademicYear).where(
-                    AcademicYear.school_id == school_id,
-                    AcademicYear.is_current.is_(True),
+            school = await session.get(School, school_id)
+            allowed = bool(school and await school_admin_for(session, user, school_id))
+    if not allowed:
+        await callback.answer("مجوز مدیریت این مدرسه را نداری.", show_alert=True)
+        return
+    await _begin_flow(
+        callback, state, flow="academic_year_create", step="name",
+        prompt="نام سال تحصیلی جدید را وارد کن؛ مثلاً ۱۴۰۶-۱۴۰۷.",
+        school_id=school_id,
+        back=f"v2:school:open:{school_id}",
+    )
+
+
+@router.callback_query(F.data.startswith("v2:school:assign_admin:"))
+async def school_assign_admin_callback(callback: CallbackQuery, state: FSMContext) -> None:
+    try:
+        school_id = int(callback.data.rsplit(":", 1)[1])
+    except ValueError:
+        await callback.answer("مدرسه معتبر نیست.", show_alert=True)
+        return
+    user = await _load_user_from_callback(callback)
+    if not user.is_platform_admin:
+        await callback.answer("فقط مدیر کل می‌تواند مدیر مدرسه تعیین کند.", show_alert=True)
+        return
+    await _begin_flow(
+        callback, state, flow="school_admin_assign", step="telegram_id",
+        prompt="شناسه عددی تلگرام مدیر جدید را وارد کن. او باید قبلاً ربات را Start کرده باشد.",
+        school_id=school_id,
+        back=f"v2:school:open:{school_id}",
+    )
+
+
+@router.callback_query(F.data.startswith("v2:school:create_class:"))
+async def school_create_class_callback(callback: CallbackQuery, state: FSMContext) -> None:
+    try:
+        parts = callback.data.split(":")
+        if len(parts) == 5:
+            school_id, year_id = int(parts[3]), int(parts[4])
+        elif len(parts) == 4:
+            school_id = int(parts[3])
+            year_id = 0
+        else:
+            raise ValueError
+    except ValueError:
+        await callback.answer("مدرسه یا سال تحصیلی معتبر نیست.", show_alert=True)
+        return
+    user = await _load_user_from_callback(callback)
+    async with SessionFactory() as session:
+        async with session.begin():
+            if year_id:
+                year = await session.scalar(
+                    select(AcademicYear).where(
+                        AcademicYear.id == year_id,
+                        AcademicYear.school_id == school_id,
+                    )
                 )
-            )
+            else:
+                year = await session.scalar(
+                    select(AcademicYear).where(
+                        AcademicYear.school_id == school_id,
+                        AcademicYear.is_current.is_(True),
+                    )
+                )
             school_admin = await school_admin_for(session, user, school_id)
     if year is None or not school_admin:
-        await callback.answer("سال جاری یا مجوز مدیریت مدرسه پیدا نشد.", show_alert=True)
+        await callback.answer("سال تحصیلی یا مجوز مدیریت مدرسه پیدا نشد.", show_alert=True)
         return
     await _begin_flow(
         callback,
@@ -1134,6 +1204,7 @@ async def school_create_class_callback(callback: CallbackQuery, state: FSMContex
         prompt="پایه را وارد کن؛ مثلاً دهم.",
         school_id=school_id,
         academic_year_id=year.id,
+        back=f"v2:school:open:{school_id}",
     )
 
 
