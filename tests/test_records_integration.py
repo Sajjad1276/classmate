@@ -26,6 +26,7 @@ from classmate.services.records import (
     get_subject,
     reject_record,
     soft_delete_subject,
+    restore_subject,
     soft_delete_class_subject,
     soft_delete_timetable_entry,
 )
@@ -154,10 +155,14 @@ async def test_soft_delete_subject_cascades_to_links_and_can_be_restored(db_sess
     assert entry.deleted_at is not None
     assert await get_subject(db_session, class_group.id, school.id, "Mathematics") is None
 
-    restored = await add_subject(db_session, class_group.id, school.id, "Mathematics")
-    assert restored.id == subject.id
-    assert restored.deleted_at is None
+    with pytest.raises(ValueError, match="آرشیو شده"):
+        await add_subject(db_session, class_group.id, school.id, "Mathematics")
+
+    assert await restore_subject(db_session, subject.id)
+    assert subject.deleted_at is None
     assert link.deleted_at is None
+    assert entry.deleted_at is None
+    assert await get_subject(db_session, class_group.id, school.id, "Mathematics") is subject
 
 
 @pytest.mark.asyncio
