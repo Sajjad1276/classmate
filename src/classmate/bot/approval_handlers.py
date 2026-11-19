@@ -198,6 +198,7 @@ async def reminder_resolve_command(message: Message):
                 response = "یادآوری به‌عنوان ارسال‌شده ثبت شد و دیگر ارسال نمی‌شود."
             else:
                 job.status = ReminderStatus.RETRY
+                job.attempts = 0
                 job.scheduled_at = datetime.now(timezone.utc)
                 job.locked_at = None
                 job.last_error = "Manually re-queued by platform administrator; duplicate delivery is possible."
