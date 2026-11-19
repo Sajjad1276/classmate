@@ -61,6 +61,8 @@ from classmate.services.records import (
     list_homework_for_lesson,
     list_pending_records,
     list_reports,
+    list_daily_summary,
+    list_current_timetable,
     normalize_subject_name,
     reject_record,
 )
@@ -413,28 +415,25 @@ async def _show_action(
         async with SessionFactory() as session:
             async with session.begin():
                 today = datetime.now(ZoneInfo(school.timezone)).date()
-                reports = await list_reports(session, class_id, today)
-        if not reports:
-            body = "برای امروز گزارش تأییدشده‌ای ثبت نشده است."
-        else:
-            body = "\n\n".join(
-                f"🗒 <b>{escape(report.title or 'گزارش روزانه')}</b>\n"
-                f"{jalali_date(report.report_date)}\n{escape(report.body)}"
+                reports, homework_rows, exam_rows = await list_daily_summary(
+                    session, class_id, today, school.timezone
+                )
+        parts = [f"🗓 <b>خلاصه امروز — {jalali_date(today)}</b>"]
+        if reports:
+            parts.extend(
+                f"\n🗒 <b>{escape(report.title or 'گزارش روزانه')}</b>\n{escape(report.body)}"
                 for report in reports
             )
+        else:
+            parts.append("\n🗒 گزارش تأییدشده‌ای برای امروز ثبت نشده است.")
+        parts.append("\n" + _format_homework(homework_rows))
+        parts.append("\n" + _format_exams(exam_rows, school.timezone))
+        body = "\n".join(parts)
     elif action == "week":
         async with SessionFactory() as session:
             async with session.begin():
-                entries = list(
-                    (
-                        await session.execute(
-                            select(TimetableEntry, Subject)
-                            .join(Subject, TimetableEntry.subject_id == Subject.id)
-                            .where(TimetableEntry.class_id == class_id)
-                            .order_by(TimetableEntry.weekday, TimetableEntry.period)
-                        )
-                    ).all()
-                )
+                today = datetime.now(ZoneInfo(school.timezone)).date()
+                entries = await list_current_timetable(session, class_id, today)
         body = (
             "برنامه هفتگی هنوز برای این کلاس ثبت نشده است."
             if not entries
@@ -856,9 +855,9 @@ async def main_button_handler(message: Message, state: FSMContext, bot: Bot) -> 
     if label == "ℹ️ راهنمای استفاده":
         await _render_from_message(
             message, state, bot,
-            "ℹ️ <b>راهنمای ClassMate</b>\\n"
-            "تمام عملیات از دکمه‌های کیبورد پایین صفحه آغاز می‌شوند.\\n"
-            "برای ورود به کلاس از «عضویت در کلاس» استفاده کن؛ برای ثبت تکلیف، امتحان یا گزارش «ثبت اطلاعات» را بزن.\\n"
+            "ℹ️ <b>راهنمای ClassMate</b>\n"
+            "تمام عملیات از دکمه‌های کیبورد پایین صفحه آغاز می‌شوند.\n"
+            "برای ورود به کلاس از «عضویت در کلاس» استفاده کن؛ برای ثبت تکلیف، امتحان یا گزارش «ثبت اطلاعات» را بزن.\n"
             "هر پنل داخلی دکمه بازگشت دارد و فقط نقش‌های مجاز، گزینه‌های مدیریتی و صف بررسی را می‌بینند.",
             _markup([]),
         )
