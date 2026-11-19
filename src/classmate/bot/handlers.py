@@ -10,8 +10,6 @@ from aiogram.fsm.context import FSMContext
 from aiogram.types import (
     BotCommandScopeChat,
     CallbackQuery,
-    InlineKeyboardButton,
-    InlineKeyboardMarkup,
     Message,
 )
 from sqlalchemy import func, or_, select
