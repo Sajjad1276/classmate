@@ -5,6 +5,7 @@ from zoneinfo import ZoneInfo
 from sqlalchemy import or_, select
 from sqlalchemy.ext.asyncio import AsyncSession
 
+from classmate.domain.enums import EntityType, ReminderStatus
 from classmate.db.models import (
     ClassGroup,
     ClassMembership,
@@ -27,7 +28,7 @@ async def schedule_approved_record_reminders(
     """Persist group and opted-in private reminders for an approved record."""
     zone = ZoneInfo(school_timezone)
     now = datetime.now(zone)
-    if entity_type == "exam":
+    if entity_type == EntityType.EXAM:
         due_at = entity.scheduled_at.astimezone(zone)
         candidates = [
             (due_at - timedelta(hours=24), "۲۴ ساعت تا امتحان"),
@@ -54,6 +55,11 @@ async def schedule_approved_record_reminders(
     targets: list[tuple[str, int]] = []
     if class_group.group_chat_id is not None:
         targets.append(("group", class_group.group_chat_id))
+    preference_enabled = (
+        NotificationPreference.exams_enabled
+        if entity_type == EntityType.EXAM
+        else NotificationPreference.homework_enabled
+    )
     preferences = (
         await session.execute(
             select(User.telegram_id)
@@ -68,12 +74,7 @@ async def schedule_approved_record_reminders(
                 ClassMembership.is_active.is_(True),
                 User.private_chat_started.is_(True),
                 User.is_active.is_(True),
-                or_(
-                    NotificationPreference.exams_enabled.is_(True)
-                    if entity_type == "exam"
-                    else NotificationPreference.homework_enabled.is_(True),
-                    NotificationPreference.id.is_(None),
-                ),
+                or_(preference_enabled.is_(True), NotificationPreference.id.is_(None)),
             )
         )
     ).all()
