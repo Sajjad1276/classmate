@@ -14,10 +14,10 @@ from classmate.bot.keyboards import (
     approval_keyboard,
     class_picker,
     main_menu,
+    main_reply_keyboard,
     new_record_menu,
     subject_picker,
 )
-from classmate.bot.command_menu import sync_private_command_menu
 from classmate.bot.states import RecordWizard
 from classmate.core.config import get_settings
 from classmate.db.models import (
@@ -209,58 +209,53 @@ def _parse_pipe_args(raw: str, count: int) -> list[str]:
 
 
 @router.message(CommandStart())
-async def start(message: Message, state: FSMContext, bot: Bot):
+async def start(message: Message, state: FSMContext):
     await state.clear()
-    role_flags = None
     async with SessionFactory() as session:
         async with session.begin():
             user = await _user(session, message.from_user, private=message.chat.type == "private")
             platform_admin = user.is_platform_admin
-            if message.chat.type == "private":
-                school_admin = platform_admin or (
-                    await session.scalar(
-                        select(SchoolMembership.id).where(
-                            SchoolMembership.user_id == user.id,
-                            SchoolMembership.role == "school_admin",
-                            SchoolMembership.is_active.is_(True),
+            school_admin = platform_admin or (
+                await session.scalar(
+                    select(SchoolMembership.id).where(
+                        SchoolMembership.user_id == user.id,
+                        SchoolMembership.role == "school_admin",
+                        SchoolMembership.is_active.is_(True),
+                    )
+                )
+            ) is not None
+            class_roles = set(
+                (
+                    await session.scalars(
+                        select(ClassMembership.role).where(
+                            ClassMembership.user_id == user.id,
+                            ClassMembership.is_active.is_(True),
                         )
                     )
-                ) is not None
-                class_roles = set(
-                    (
-                        await session.scalars(
-                            select(ClassMembership.role).where(
-                                ClassMembership.user_id == user.id,
-                                ClassMembership.is_active.is_(True),
-                            )
-                        )
-                    ).all()
-                )
-                class_manager = "class_manager" in class_roles
-                approver = (
-                    school_admin
-                    or class_manager
-                    or "trusted_approver" in class_roles
-                )
-                role_flags = (school_admin, class_manager, approver)
-    if message.chat.type == "private" and role_flags is not None:
-        await sync_private_command_menu(
-            bot,
-            message.chat.id,
-            is_platform_admin=platform_admin,
-            is_school_admin=role_flags[0],
-            is_class_manager=role_flags[1],
-            is_approver=role_flags[2],
-        )
-    greeting = f"سلام {escape(message.from_user.first_name or '')} 👋\n"
+                ).all()
+            )
+            class_manager = "class_manager" in class_roles
+            approver = (
+                school_admin or class_manager or "trusted_approver" in class_roles
+            )
+    greeting = f"سلام {escape(message.from_user.first_name or '')} 👋\\n"
     greeting += (
-        "به ClassMate خوش آمدی. اینجا اطلاعات کلاس‌ها، تکالیف، امتحانات و گزارش‌ها "
-        "در یک حافظه منظم نگهداری می‌شوند.\n\n"
-        "اطلاعات ثبت‌شده تا زمان تأیید افراد مورد اعتماد، قطعی نمایش داده نمی‌شوند."
+        "به ClassMate خوش آمدی. تمام بخش‌ها را با دکمه‌های پایین صفحه باز کن.\\n"
+        "اطلاعات ثبت‌شده تا پیش از تأیید افراد مورد اعتماد، در فهرست قطعی کلاس نمایش داده نمی‌شوند."
     )
     if platform_admin:
-        greeting += "\n\nدسترسی مدیر کل سامانه برای حساب تو فعال است."
-    await message.answer(greeting, reply_markup=main_menu())
+        greeting += "\\n\\n🛡 پنل مدیر کل برای این حساب فعال است."
+    keyboard = (
+        main_reply_keyboard(
+            is_platform_admin=platform_admin,
+            is_school_admin=school_admin,
+            is_class_manager=class_manager,
+            is_approver=approver,
+        )
+        if message.chat.type == "private"
+        else None
+    )
+    await message.answer(greeting, reply_markup=keyboard)
 
 
 @router.message(Command("help"))
