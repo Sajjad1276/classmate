@@ -104,5 +104,8 @@ def cancel_form():
 
 def form_navigation(back: str):
     return InlineKeyboardMarkup(
-        inline_keyboard=[[button("⬅️ بازگشت", back), button("❌ لغو فرم", "v2:form:cancel")]]
+        inline_keyboard=[
+            [button("⬅️ بازگشت", back)],
+            [button("❌ لغو فرم", "v2:form:cancel")],
+        ]
     )
