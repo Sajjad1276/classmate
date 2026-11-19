@@ -1,5 +1,4 @@
 from datetime import date, datetime, time, timedelta, timezone
-from zoneinfo import ZoneInfo
 
 import pytest
 
@@ -8,8 +7,6 @@ from classmate.db.models import (
     ClassGroup,
     ClassMembership,
     ClassSubject,
-    Homework,
-    NotificationPreference,
     ReminderJob,
     School,
     SchoolMembership,
@@ -99,8 +96,6 @@ async def test_approval_self_approval_guard_and_cancellation(db_session):
     assert "غیرفعال" in message
     assert homework.status == RecordStatus.CANCELLED
     assert homework.cancelled_at is not None
-    reminder = await db_session.get(ReminderJob, 1)
-    # SQLite may allocate a different primary key if tests share a connection; select by dedupe key.
     from sqlalchemy import select
     reminder = await db_session.scalar(select(ReminderJob).where(ReminderJob.dedupe_key == "integration:cancel:homework:1"))
     assert reminder.status == ReminderStatus.CANCELLED
