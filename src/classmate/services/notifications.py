@@ -23,8 +23,12 @@ async def schedule_approved_record_reminders(
     entity: Homework | Exam,
     entity_type: str,
     school_timezone: str,
+    *,
+    target_user_id: int | None = None,
+    include_group: bool = True,
 ) -> int:
     """Persist group and opted-in private reminders for an approved record."""
+
     zone = ZoneInfo(school_timezone)
     now = datetime.now(zone)
     if entity_type == "exam":
@@ -52,7 +56,7 @@ async def schedule_approved_record_reminders(
         return 0
 
     targets: list[tuple[str, int]] = []
-    if class_group.group_chat_id is not None:
+    if include_group and class_group.group_chat_id is not None:
         targets.append(("group", class_group.group_chat_id))
     preferences = (
         await session.execute(
@@ -68,6 +72,7 @@ async def schedule_approved_record_reminders(
                 ClassMembership.is_active.is_(True),
                 User.private_chat_started.is_(True),
                 User.is_active.is_(True),
+                *([User.id == target_user_id] if target_user_id is not None else []),
                 or_(
                     NotificationPreference.exams_enabled.is_(True)
                     if entity_type == "exam"
@@ -86,10 +91,19 @@ async def schedule_approved_record_reminders(
                 f"{entity_type}:{entity.id}:{target_type}:{target_id}:"
                 f"{scheduled_at.isoformat()}"
             )
-            exists = await session.scalar(
-                select(ReminderJob.id).where(ReminderJob.dedupe_key == dedupe)
+            existing = await session.scalar(
+                select(ReminderJob)
+                .where(ReminderJob.dedupe_key == dedupe)
+                .with_for_update()
             )
-            if exists:
+            if existing is not None:
+                if existing.status == "cancelled":
+                    existing.status = "pending"
+                    existing.scheduled_at = scheduled_at
+                    existing.attempts = 0
+                    existing.last_error = None
+                    existing.locked_at = None
+                    created += 1
                 continue
             subject = await session.get(Subject, entity.subject_id)
             message = (
