@@ -52,6 +52,7 @@ from classmate.services.permissions import (
 from classmate.services.records import (
     add_subject,
     approve_record,
+    cancel_approved_record,
     audit,
     get_or_create_next_lesson,
     get_subject,
@@ -584,6 +585,7 @@ async def _show_management_from_message(
         [_button("👤 افزودن فرد مورد اعتماد", f"ui:form:approver_add:{class_id}")],
         [_button("📘 افزودن درس", f"ui:form:subject_add:{class_id}")],
         [_button("🗓 تنظیم زنگ برنامه", f"ui:form:timetable_set:{class_id}")],
+        [_button("🚫 لغو تکلیف یا امتحان", f"ui:cancel_records:{class_id}")],
     ]
     await _render_from_message(
         message,
@@ -1182,6 +1184,151 @@ async def cancel_input(callback: CallbackQuery, state: FSMContext):
         await _show_management_from_message(callback.message, state, callback.bot, class_id, callback.from_user)
     else:
         await _close_panel(callback, state)
+
+
+async def _show_cancelable_records(
+    callback: CallbackQuery,
+    state: FSMContext,
+    class_id: int,
+) -> None:
+    context = await _class_context(class_id, callback.from_user)
+    if not context or not (
+        context["is_manager"] or context["is_school_admin"] or context["is_platform_admin"]
+    ):
+        await callback.answer("فقط مدیر کلاس یا مدیر مدرسه می‌تواند رکوردها را لغو کند.", show_alert=True)
+        return
+    async with SessionFactory() as session:
+        async with session.begin():
+            homework_rows = await list_homework(session, class_id)
+            exam_rows = await list_exams(session, class_id)
+    rows = []
+    lines = ["🚫 <b>لغو اطلاعات تأییدشده</b>", "رکورد را انتخاب کن؛ قبل از لغو، تأیید جداگانه می‌گیری."]
+    for homework, subject in homework_rows[:8]:
+        rows.append([
+            _button(
+                f"📚 {subject.name[:14]} · {homework.title[:28]}",
+                f"ui:cancel_confirm:homework:{homework.id}:{class_id}",
+            )
+        ])
+    for exam, subject in exam_rows[:8]:
+        rows.append([
+            _button(
+                f"📝 {subject.name[:14]} · {exam.title[:28]}",
+                f"ui:cancel_confirm:exam:{exam.id}:{class_id}",
+            )
+        ])
+    if not rows:
+        lines.append("\\nمورد تأییدشدهٔ فعالی برای لغو وجود ندارد.")
+    else:
+        lines.append("\\nتکلیف و امتحان‌های آینده در فهرست زیر هستند.")
+    if len(homework_rows) > 8 or len(exam_rows) > 8:
+        lines.append("\\nفقط ۸ مورد از هر دسته نمایش داده شده است.")
+    await _render_from_callback(
+        callback,
+        state,
+        "\\n".join(lines),
+        _markup(rows, f"ui:manage:{class_id}"),
+    )
+
+
+@router.callback_query(F.data.startswith("ui:cancel_records:"))
+async def cancel_records_selector(callback: CallbackQuery, state: FSMContext):
+    try:
+        class_id = int(callback.data.rsplit(":", 1)[1])
+        if class_id < 1:
+            raise ValueError
+    except (ValueError, TypeError):
+        await callback.answer("شناسه کلاس نامعتبر است.", show_alert=True)
+        return
+    await _show_cancelable_records(callback, state, class_id)
+
+
+@router.callback_query(F.data.startswith("ui:cancel_confirm:"))
+async def cancel_record_confirm(callback: CallbackQuery, state: FSMContext):
+    try:
+        _, _, _, entity_type, entity_id_raw, class_id_raw = callback.data.split(":")
+        entity_id, class_id = int(entity_id_raw), int(class_id_raw)
+        if entity_type not in {"homework", "exam"} or entity_id < 1 or class_id < 1:
+            raise ValueError
+    except (AttributeError, TypeError, ValueError):
+        await callback.answer("درخواست لغو نامعتبر یا منقضی شده است.", show_alert=True)
+        return
+    context = await _class_context(class_id, callback.from_user)
+    if not context or not (
+        context["is_manager"] or context["is_school_admin"] or context["is_platform_admin"]
+    ):
+        await callback.answer("مجوز لغو این اطلاعات را نداری.", show_alert=True)
+        return
+    label = "تکلیف" if entity_type == "homework" else "امتحان"
+    rows = [[
+        _button("بله، لغو شود", f"ui:cancel_do:{entity_type}:{entity_id}:{class_id}"),
+        _button("خیر، برگشت", f"ui:cancel_records:{class_id}"),
+    ]]
+    await _render_from_callback(
+        callback,
+        state,
+        f"⚠️ <b>تأیید لغو {label}</b>\\n"
+        "این رکورد حذف نمی‌شود و در تاریخچه می‌ماند، اما از فهرست فعال کنار می‌رود "
+        "و یادآوری‌های ارسال‌نشدهٔ آن لغو می‌شوند.\\n\\n"
+        "این عملیات قابل بازگردانی از پنل نیست.",
+        _markup(rows, f"ui:manage:{class_id}"),
+    )
+
+
+@router.callback_query(F.data.startswith("ui:cancel_do:"))
+async def cancel_record_execute(callback: CallbackQuery, state: FSMContext):
+    try:
+        _, _, _, entity_type, entity_id_raw, class_id_raw = callback.data.split(":")
+        entity_id, class_id = int(entity_id_raw), int(class_id_raw)
+        if entity_type not in {"homework", "exam"} or entity_id < 1 or class_id < 1:
+            raise ValueError
+    except (AttributeError, TypeError, ValueError):
+        await callback.answer("درخواست لغو نامعتبر یا منقضی شده است.", show_alert=True)
+        return
+
+    async with SessionFactory() as session:
+        async with session.begin():
+            actor = await _user(session, callback.from_user, private=True)
+            context = await get_class_with_school(session, class_id)
+            if not context:
+                await callback.answer("کلاس پیدا نشد.", show_alert=True)
+                return
+            class_group, _, school = context
+            manager = await session.scalar(
+                select(ClassMembership.id).where(
+                    ClassMembership.class_id == class_id,
+                    ClassMembership.user_id == actor.id,
+                    ClassMembership.role == "class_manager",
+                    ClassMembership.is_active.is_(True),
+                )
+            )
+            if not (
+                actor.is_platform_admin
+                or await is_school_admin(session, actor, school.id)
+                or manager is not None
+            ):
+                await callback.answer("مجوز لغو این اطلاعات را نداری.", show_alert=True)
+                return
+            success, result_text = await cancel_approved_record(
+                session,
+                entity_type,
+                entity_id,
+                actor.id,
+                school.id,
+                class_id,
+            )
+            group_id = class_group.group_chat_id
+
+    await callback.answer(result_text, show_alert=not success)
+    if success and group_id is not None:
+        label = "تکلیف" if entity_type == "homework" else "امتحان"
+        try:
+            await callback.bot.send_message(
+                group_id, f"🚫 یک {label} تأییدشده لغو شد؛ یادآوری‌های آیندهٔ آن متوقف شدند."
+            )
+        except Exception:
+            logger.exception("Failed to announce cancelled %s #%s", entity_type, entity_id)
+    await _show_cancelable_records(callback, state, class_id)
 
 
 @router.callback_query(F.data.startswith("ui:review:"))
