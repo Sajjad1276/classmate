@@ -1,12 +1,10 @@
 from aiogram import Router
 from aiogram.filters import Command
 from aiogram.types import Message
-from sqlalchemy import select
 
 from classmate.bot.handlers import _user
-from classmate.db.models import ClassGroup, Subject, TimetableEntry
+from classmate.db.models import Subject, TimetableEntry
 from classmate.db.session import SessionFactory
-from classmate.domain.enums import Role
 from classmate.services.permissions import can_manage_class, get_class_with_school
 from classmate.services.records import (
     audit,
