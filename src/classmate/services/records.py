@@ -473,6 +473,7 @@ async def list_reports(session: AsyncSession, class_id: int, report_date: date):
                     DailyReport.status == "APPROVED",
                 )
                 .order_by(DailyReport.created_at.desc())
+                .limit(4)
             )
         ).scalars().all()
     )
@@ -520,6 +521,7 @@ async def list_daily_summary(
                     Homework.due_on == local_date,
                 )
                 .order_by(Homework.created_at.desc())
+                .limit(5)
             )
         ).all()
     )
@@ -535,6 +537,7 @@ async def list_daily_summary(
                     Exam.scheduled_at < end,
                 )
                 .order_by(Exam.scheduled_at.asc())
+                .limit(5)
             )
         ).all()
     )
