@@ -442,8 +442,8 @@ async def group_menu_action(callback: CallbackQuery, bot: Bot):
                 answer = (
                     "برنامه هفتگی هنوز برای این کلاس ثبت نشده است."
                     if not entries
-                    else "📅 <b>برنامه هفتگی</b>\\n"
-                    + "\\n".join(
+                    else "📅 <b>برنامه هفتگی</b>\n"
+                    + "\n".join(
                         f"{WEEKDAYS[entry.weekday]} — زنگ {entry.period}"
                         + (f" ({entry.starts_at.strftime('%H:%M')})" if entry.starts_at else "")
                         + f": {escape(subject.name)}"
@@ -465,14 +465,14 @@ async def group_menu_action(callback: CallbackQuery, bot: Bot):
                 parts = [f"🗓 <b>خلاصه امروز — {jalali_date(today)}</b>"]
                 if reports:
                     parts.extend(
-                        f"\\n🗒 <b>{escape(report.title or 'گزارش روزانه')}</b>\\n{escape(report.body)}"
+                        f"\n🗒 <b>{escape(report.title or 'گزارش روزانه')}</b>\n{escape(report.body)}"
                         for report in reports
                     )
                 else:
-                    parts.append("\\n🗒 گزارش تأییدشده‌ای برای امروز ثبت نشده است.")
-                parts.append("\\n" + _format_homework(homework_rows))
-                parts.append("\\n" + _format_exams(exam_rows, school.timezone))
-                answer = "\\n".join(parts)
+                    parts.append("\n🗒 گزارش تأییدشده‌ای برای امروز ثبت نشده است.")
+                parts.append("\n" + _format_homework(homework_rows))
+                parts.append("\n" + _format_exams(exam_rows, school.timezone))
+                answer = "\n".join(parts)
             else:
                 await callback.answer("این گزینه شناخته‌شده نیست.", show_alert=True)
                 return
@@ -485,7 +485,7 @@ async def group_menu_action(callback: CallbackQuery, bot: Bot):
                 title = getattr(record, "title", "گزارش روزانه")
                 details = getattr(record, "description", getattr(record, "body", getattr(record, "scope", "")))
                 await callback.message.answer(
-                    f"🕓 <b>{escape(kind)} #{record.id} — {escape(title)}</b>\\n"
+                    f"🕓 <b>{escape(kind)} #{record.id} — {escape(title)}</b>\n"
                     f"{escape(details[:1200])}",
                     reply_markup=approval_keyboard(kind, record.id),
                 )
@@ -493,7 +493,7 @@ async def group_menu_action(callback: CallbackQuery, bot: Bot):
                 await callback.message.answer("فقط ۸ مورد نخست صف بررسی نمایش داده شد.")
     else:
         await callback.message.answer(
-            f"🏫 <b>{escape(class_name)}</b>\\n\\n{answer}"
+            f"🏫 <b>{escape(class_name)}</b>\n\n{answer}"
         )
     await callback.answer()
 
