@@ -390,28 +390,37 @@ async def soft_delete_subject(session: AsyncSession, subject_id: int) -> bool:
     links = (await session.execute(select(ClassSubject).where(ClassSubject.subject_id == subject_id))).scalars().all()
     timetable = (await session.execute(select(TimetableEntry).where(TimetableEntry.subject_id == subject_id))).scalars().all()
     for link in links:
-        link.deleted_at = now
+        if link.deleted_at is None:
+            link.deleted_at = now
     for entry in timetable:
-        entry.deleted_at = now
+        if entry.deleted_at is None:
+            entry.deleted_at = now
     return True
 
 
 async def restore_subject(session: AsyncSession, subject_id: int) -> bool:
-    """Restore a school-wide archived subject and its class links/timetable slots."""
+    """Restore only links and timetable slots archived by this school-wide operation."""
     subject = await session.get(Subject, subject_id, with_for_update=True)
     if subject is None or subject.deleted_at is None:
         return False
-    subject.deleted_at = None
+    archived_at = subject.deleted_at
     links = (
         await session.execute(
-            select(ClassSubject).where(ClassSubject.subject_id == subject_id)
+            select(ClassSubject).where(
+                ClassSubject.subject_id == subject_id,
+                ClassSubject.deleted_at == archived_at,
+            )
         )
     ).scalars().all()
     timetable = (
         await session.execute(
-            select(TimetableEntry).where(TimetableEntry.subject_id == subject_id)
+            select(TimetableEntry).where(
+                TimetableEntry.subject_id == subject_id,
+                TimetableEntry.deleted_at == archived_at,
+            )
         )
     ).scalars().all()
+    subject.deleted_at = None
     for link in links:
         link.deleted_at = None
     for entry in timetable:
