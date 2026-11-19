@@ -110,11 +110,9 @@ def main_reply_keyboard(
 
 
 def wizard_cancel_keyboard() -> ReplyKeyboardMarkup:
+    """One navigation control: leave the wizard and restore the main menu."""
     return ReplyKeyboardMarkup(
-        keyboard=[
-            [KeyboardButton(text="⬅️ بازگشت به منو")],
-            [KeyboardButton(text="❌ لغو عملیات")],
-        ],
+        keyboard=[[KeyboardButton(text="⬅️ بازگشت")]],
         resize_keyboard=True,
         is_persistent=True,
     )
