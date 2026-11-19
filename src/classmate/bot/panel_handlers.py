@@ -694,13 +694,26 @@ async def _create_class_codes(callback: CallbackQuery, state: FSMContext, class_
 @router.message(F.chat.type == "private", F.text.in_(MAIN_BUTTONS))
 async def main_button_handler(message: Message, state: FSMContext, bot: Bot) -> None:
     label = (message.text or "").strip()
+    saved = await state.get_data()
+    panel_message_id = saved.get("panel_message_id")
     await state.clear()
+    if panel_message_id is not None:
+        await state.update_data(panel_message_id=panel_message_id)
     try:
         await message.delete()
     except TelegramBadRequest:
         pass
     if label == "❌ لغو عملیات":
-        await message.answer("عملیات جاری لغو شد. اطلاعات ناقص ذخیره نشده است.")
+        _, roles = await _current_user(message)
+        await message.answer(
+            "عملیات جاری لغو شد. اطلاعات ناقص ذخیره نشده است.",
+            reply_markup=main_reply_keyboard(
+                is_platform_admin=roles["platform"],
+                is_school_admin=roles["school"],
+                is_class_manager=roles["manager"],
+                is_approver=roles["approver"],
+            ),
+        )
         return
     if label == "🔑 عضویت در کلاس":
         await state.set_state(PanelInput.input)
