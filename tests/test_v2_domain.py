@@ -26,4 +26,6 @@ def test_normalize_name_collapses_whitespace():
 
 def test_normalize_name_rejects_control_only_content():
     with pytest.raises(ValidationError):
-        normalize_name("\\n\\t")
+        normalize_name("\n\t")
+    with pytest.raises(ValidationError):
+        normalize_name("   ")
