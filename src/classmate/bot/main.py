@@ -15,7 +15,7 @@ from classmate.bot.wizard_handlers import router as wizard_router
 from classmate.bot.management_handlers import router as management_router
 from classmate.bot.middlewares import ProcessedUpdateMiddleware
 from classmate.db.fsm_storage import PostgresFSMStorage
-from classmate.db.session import SessionFactory
+from classmate.db.session import SessionFactory, dispose_engine
 from classmate.core.config import get_settings
 from classmate.core.logging import configure_logging
 
@@ -46,7 +46,10 @@ async def main() -> None:
     try:
         await dispatcher.start_polling(bot, allowed_updates=dispatcher.resolve_used_update_types())
     finally:
-        await bot.session.close()
+        try:
+            await bot.session.close()
+        finally:
+            await dispose_engine()
 
 
 if __name__ == "__main__":
