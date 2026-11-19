@@ -21,6 +21,13 @@ def test_regular_user_sees_only_student_navigation():
     assert "🕓 صف بررسی" not in labels
 
 
+def test_main_keyboard_has_no_temporary_back_or_cancel_button():
+    labels = _labels(main_reply_keyboard())
+
+    assert "⬅️ بازگشت" not in labels
+    assert "❌ لغو عملیات" not in labels
+
+
 def test_platform_admin_sees_platform_and_school_management():
     labels = _labels(
         main_reply_keyboard(
