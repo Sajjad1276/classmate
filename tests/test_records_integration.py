@@ -21,6 +21,7 @@ from classmate.services.records import (
     approve_record,
     cancel_approved_record,
     create_homework,
+    create_daily_report,
     get_subject,
     reject_record,
     soft_delete_subject,
@@ -189,3 +190,18 @@ async def test_soft_delete_timetable_entry_is_idempotent(db_session):
     assert await soft_delete_timetable_entry(db_session, entry.id)
     assert entry.deleted_at is not None
     assert not await soft_delete_timetable_entry(db_session, entry.id)
+
+
+@pytest.mark.asyncio
+async def test_cancelling_approved_daily_report_persists_cancelled_at(db_session):
+    school, class_group, creator, approver, subject = await _seed_class(db_session)
+    report = await create_daily_report(
+        db_session, class_group.id, date.today(), "Test report", creator.id, "Today"
+    )
+    report.status = RecordStatus.APPROVED
+    success, message = await cancel_approved_record(
+        db_session, "report", report.id, approver.id, school.id, class_group.id
+    )
+    assert success
+    assert report.status == RecordStatus.CANCELLED
+    assert report.cancelled_at is not None
