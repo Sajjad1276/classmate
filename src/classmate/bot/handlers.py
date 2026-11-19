@@ -273,18 +273,20 @@ async def start(message: Message, state: FSMContext, bot: Bot):
 
 @router.message(Command("help"))
 async def help_command(message: Message):
+    async with SessionFactory() as session:
+        async with session.begin():
+            user = await _user(session, message.from_user, private=message.chat.type == "private")
+            keyboard = (
+                await _main_keyboard_for_user(session, user)
+                if message.chat.type == "private"
+                else None
+            )
     await message.answer(
         "<b>راهنمای ClassMate</b>\n"
-        "برای استفاده از ربات نیازی به تایپ فرمان نیست. از کیبورد پایین صفحه، بخش موردنظر را انتخاب کن.\n\n"
-        "🏫 کلاس‌های من: مشاهده کلاس‌ها و ورود به پنل هر کلاس\n"
-        "🔑 عضویت در کلاس: واردکردن کد دعوت\n"
-        "➕ ثبت اطلاعات: ثبت مرحله‌ای تکلیف، امتحان یا گزارش\n"
-        "📚 تکالیف و 📝 امتحانات: مشاهده موارد تأییدشده\n"
-        "📅 برنامه هفتگی و 🗒 گزارش امروز: مشاهده اطلاعات کلاس\n"
-        "🔎 جست‌وجو: یافتن تکلیف یا جلسه بعد\n"
-        "🔔 یادآوری: تنظیم اعلان‌های شخصی\n\n"
-        "گزینه‌های مدیریتی و بررسی فقط برای نقش‌های مجاز نمایش داده می‌شوند.",
-        reply_markup=main_reply_keyboard(),
+        "برای استفاده از ربات، از دکمه‌های پایین صفحه استفاده کن.\n"
+        "گزینه‌های مدیریتی و بررسی فقط برای نقش‌های مجاز نمایش داده می‌شوند.\n"
+        "برای بازگشت از هر پنل، دکمه «بازگشت» همان پنل را بزن.",
+        reply_markup=keyboard,
     )
 
 
