@@ -7,7 +7,7 @@ from aiogram import Bot, F, Router
 from aiogram.filters import Command, CommandStart
 from aiogram.fsm.context import FSMContext
 from aiogram.types import BotCommandScopeChat, CallbackQuery, Message
-from sqlalchemy import or_, select
+from sqlalchemy import func, or_, select
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from classmate.bot.keyboards import (
@@ -273,6 +273,7 @@ async def connect_school_group(message: Message, bot: Bot):
     async with SessionFactory() as session:
         async with session.begin():
             actor = await _user(session, message.from_user, private=False)
+            await session.execute(select(func.pg_advisory_xact_lock(message.chat.id)))
             now = datetime.now(timezone.utc)
             school = await session.scalar(
                 select(School)
@@ -293,6 +294,12 @@ async def connect_school_group(message: Message, bot: Bot):
                 await message.answer("فقط مدیر همین مدرسه یا مدیر کل می‌تواند گروه مدرسه را متصل کند.")
                 return
 
+            class_binding = await session.scalar(
+                select(ClassGroup.id).where(ClassGroup.group_chat_id == message.chat.id)
+            )
+            if class_binding is not None:
+                await message.answer("این گروه قبلاً به یک کلاس متصل شده است؛ برای مدرسه یک گروه جدا بساز.")
+                return
             already_used = await session.scalar(
                 select(School.id).where(
                     School.telegram_group_id == message.chat.id,
@@ -822,6 +829,7 @@ async def connect_group(message: Message, bot: Bot):
     async with SessionFactory() as session:
         async with session.begin():
             await _user(session, message.from_user)
+            await session.execute(select(func.pg_advisory_xact_lock(message.chat.id)))
             class_group = await session.scalar(
                 select(ClassGroup)
                 .where(
@@ -833,6 +841,12 @@ async def connect_group(message: Message, bot: Bot):
             )
             if class_group is None:
                 await message.answer("کد اتصال نامعتبر یا قبلاً مصرف شده است.")
+                return
+            school_binding = await session.scalar(
+                select(School.id).where(School.telegram_group_id == message.chat.id)
+            )
+            if school_binding is not None:
+                await message.answer("این گروه به‌عنوان گروه مرکزی یک مدرسه متصل است؛ برای کلاس یک گروه جدا بساز.")
                 return
             occupied = await session.scalar(
                 select(ClassGroup.id).where(
