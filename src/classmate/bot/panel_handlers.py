@@ -1022,11 +1022,6 @@ async def review_callback(callback: CallbackQuery, state: FSMContext):
         )
 
 
-def _parse_persian_int(value: str) -> int:
-    translated = value.translate(str.maketrans("۰۱۲۳۴۵۶۷۸۹", "0123456789"))
-    return int(translated)
-
-
 @router.message(PanelInput.input, F.text.func(_is_panel_input_text))
 async def panel_text_input(message: Message, state: FSMContext, bot: Bot):
     try:
