@@ -1,4 +1,5 @@
 from classmate.bot.keyboards import main_reply_keyboard, wizard_cancel_keyboard
+from classmate.bot.panel_handlers import _is_panel_input_text, _markup, _parent_for_form
 
 
 def _labels(markup) -> set[str]:
@@ -52,3 +53,22 @@ def test_class_manager_sees_class_management_but_not_platform_admin():
 def test_wizard_keyboard_has_a_return_to_menu_control():
     labels = _labels(wizard_cancel_keyboard())
     assert labels == {"⬅️ بازگشت"}
+
+
+def test_panel_input_does_not_consume_telegram_commands():
+    assert _is_panel_input_text("ABC123")
+    assert not _is_panel_input_text("/start")
+    assert not _is_panel_input_text("/start payload")
+    assert not _is_panel_input_text("   /start")
+    assert not _is_panel_input_text(None)
+
+
+def test_join_form_back_returns_directly_to_main_menu():
+    assert _parent_for_form("join", None) == "ui:close"
+
+
+def test_join_form_has_an_explicit_back_callback():
+    markup = _markup([], "ui:cancel_input")
+    back = markup.inline_keyboard[-1][0]
+    assert back.text == "⬅️ بازگشت"
+    assert back.callback_data == "ui:cancel_input"
