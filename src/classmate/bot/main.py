@@ -38,8 +38,8 @@ async def main() -> None:
     dispatcher.include_router(group_router)
     dispatcher.include_router(private_router)
     dispatcher.include_router(wizard_router)
-    dispatcher.include_router(panel_router)
     dispatcher.include_router(router)
+    dispatcher.include_router(panel_router)
     logging.getLogger(__name__).info("Starting ClassMate bot polling")
     try:
         await dispatcher.start_polling(bot, allowed_updates=dispatcher.resolve_used_update_types())
