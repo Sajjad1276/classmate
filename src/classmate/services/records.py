@@ -355,6 +355,48 @@ async def approve_record(
     return True, "اطلاعات تأیید شد."
 
 
+async def cancel_approved_record(
+    session: AsyncSession,
+    entity_type: str,
+    entity_id: int,
+    actor_id: int,
+    school_id: int,
+    class_id: int,
+) -> tuple[bool, str]:
+    """Cancel an approved homework/exam without deleting its audit history."""
+    model_map = {"homework": Homework, "exam": Exam}
+    model = model_map.get(entity_type)
+    if model is None:
+        return False, "فقط تکلیف یا امتحان قابل لغو است."
+
+    record = await session.scalar(
+        select(model)
+        .where(model.id == entity_id, model.class_id == class_id)
+        .with_for_update()
+    )
+    if record is None:
+        return False, "رکورد موردنظر پیدا نشد."
+    if record.status != "APPROVED":
+        return False, "این رکورد دیگر در وضعیت تأییدشده نیست."
+
+    record.status = "CANCELLED"
+    record.cancelled_at = datetime.now(timezone.utc)
+    await set_reminders_cancelled(session, entity_type, entity_id)
+    await audit(
+        session,
+        school_id,
+        class_id,
+        actor_id,
+        "record_cancelled",
+        entity_type,
+        entity_id,
+        {"status": "APPROVED"},
+        {"status": "CANCELLED"},
+    )
+    label = "تکلیف" if entity_type == "homework" else "امتحان"
+    return True, f"✅ {label} لغو شد؛ یادآوری‌های ارسال‌نشده نیز لغو شدند."
+
+
 async def reject_record(
     session: AsyncSession,
     entity_type: str,
@@ -532,9 +574,10 @@ async def set_reminders_cancelled(
             select(ReminderJob).where(
                 ReminderJob.entity_type == entity_type,
                 ReminderJob.entity_id == entity_id,
-                ReminderJob.status.in_(["pending", "retry"]),
+                ReminderJob.status.in_(["pending", "retry", "processing"]),
             )
         )
     ).scalars().all()
     for job in jobs:
         job.status = "cancelled"
+        job.locked_at = None
