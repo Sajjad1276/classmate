@@ -215,7 +215,7 @@ async def create_exam(
         exam_type=exam_type,
         scheduled_at=scheduled_at,
         created_by=created_by,
-        status="PENDING",
+        status=RecordStatus.PENDING,
     )
     session.add(record)
     await session.flush()
@@ -236,7 +236,7 @@ async def create_daily_report(
         title=(title or "گزارش روزانه")[:180],
         body=body.strip(),
         created_by=created_by,
-        status="PENDING",
+        status=RecordStatus.PENDING,
     )
     session.add(record)
     await session.flush()
@@ -425,7 +425,11 @@ async def list_homework(
     query = (
         select(Homework, Subject)
         .join(Subject, Homework.subject_id == Subject.id)
-        .where(Homework.class_id == class_id, Homework.status == "APPROVED")
+        .where(
+            Homework.class_id == class_id,
+            Homework.status == RecordStatus.APPROVED,
+            Subject.deleted_at.is_(None),
+        )
         .order_by(Homework.due_on.asc().nullslast(), Homework.created_at.desc())
         .limit(30)
     )
@@ -473,7 +477,7 @@ async def list_pending_records(session: AsyncSession, class_id: int):
     for label, model in (("homework", Homework), ("exam", Exam), ("report", DailyReport)):
         records = (
             await session.execute(
-                select(model).where(model.class_id == class_id, model.status == "PENDING")
+                select(model).where(model.class_id == class_id, model.status == RecordStatus.PENDING)
                 .order_by(model.created_at.asc()).limit(15)
             )
         ).scalars().all()
