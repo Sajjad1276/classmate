@@ -1372,7 +1372,11 @@ async def week_command(message: Message):
                     await session.execute(
                         select(TimetableEntry, Subject)
                         .join(Subject, TimetableEntry.subject_id == Subject.id)
-                        .where(TimetableEntry.class_id == class_group.id)
+                        .where(
+                            TimetableEntry.class_id == class_group.id,
+                            TimetableEntry.deleted_at.is_(None),
+                            Subject.deleted_at.is_(None),
+                        )
                         .order_by(TimetableEntry.weekday, TimetableEntry.period)
                     )
                 ).all()
