@@ -254,12 +254,31 @@ async def _show_class_selector_from_message(
     action: str,
 ) -> None:
     classes = await _get_classes(tg_user)
+    if action in {"pending", "manage"}:
+        eligible = []
+        for candidate_id, candidate_name in classes:
+            context = await _class_context(candidate_id, tg_user)
+            if not context:
+                continue
+            allowed = context["is_approver"] if action == "pending" else (
+                context["is_manager"] or context["is_school_admin"] or context["is_platform_admin"]
+            )
+            if allowed:
+                eligible.append((candidate_id, candidate_name))
+        classes = eligible
     if not classes:
+        notice = (
+            "در هیچ‌کدام از کلاس‌های قابل‌دسترسی، مجوز بررسی نداری."
+            if action == "pending"
+            else "کلاسی با دسترسی مدیریت برای این حساب پیدا نشد."
+            if action == "manage"
+            else "🏫 هنوز کلاسی به حساب تو متصل نشده است. از مدیر کلاس کد دعوت بگیر."
+        )
         await _render_from_message(
             message,
             state,
             bot,
-            "🏫 هنوز کلاسی به حساب تو متصل نشده است. از مدیر کلاس کد دعوت بگیر.",
+            notice,
             _markup([]),
         )
         return
@@ -1221,7 +1240,7 @@ async def _handle_panel_input(message: Message, state: FSMContext, bot: Bot) -> 
         await _render_from_message(
             message, state, bot, result_text, _markup([], back)
         )
-    except (ValueError, PermissionError, TypeError) as exc:
+    except (ValueError, PermissionError, TypeError, KeyError) as exc:
         await state.set_state(PanelInput.input)
         await _render_from_message(
             message,
@@ -1295,6 +1314,10 @@ async def _handle_search_input(message: Message, state: FSMContext, bot: Bot) ->
 
 @router.message(PanelInput.input)
 async def panel_text_input(message: Message, state: FSMContext, bot: Bot):
+    try:
+        await message.delete()
+    except TelegramBadRequest:
+        pass
     data = await state.get_data()
     if data.get("panel_form") == "search":
         await _handle_search_input(message, state, bot)
