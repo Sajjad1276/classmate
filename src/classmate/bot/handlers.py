@@ -1,5 +1,5 @@
 import logging
-from datetime import date, datetime, time, timedelta, timezone
+from datetime import datetime, time, timedelta, timezone
 from html import escape
 from zoneinfo import ZoneInfo
 
@@ -10,16 +10,12 @@ from aiogram.types import BotCommandScopeChat, CallbackQuery, Message
 from sqlalchemy import or_, select
 from sqlalchemy.ext.asyncio import AsyncSession
 
-from classmate.bot.formatters import _format_exams, _format_homework, _pending_message
+from classmate.bot.formatters import _format_exams, _format_homework
 from classmate.bot.keyboards import (
-    class_picker,
     main_menu,
     main_reply_keyboard,
-    wizard_cancel_keyboard,
     new_record_menu,
-    subject_picker,
 )
-from classmate.bot.states import RecordWizard
 from classmate.core.config import get_settings
 from classmate.db.models import (
     AcademicYear,
@@ -34,12 +30,10 @@ from classmate.db.models import (
     User,
 )
 from classmate.db.session import SessionFactory
-from classmate.domain.enums import RecordStatus, Role
+from classmate.domain.enums import Role
 from classmate.domain.dates import (
     jalali_date,
     jalali_datetime,
-    parse_school_date,
-    parse_school_datetime,
 )
 from classmate.services.permissions import (
     ensure_user,
@@ -52,9 +46,6 @@ from classmate.services.permissions import (
 from classmate.services.records import (
     add_subject,
     audit,
-    create_daily_report,
-    create_exam,
-    create_homework,
     get_group_context,
     get_subject,
     get_or_create_next_lesson,
