@@ -253,10 +253,17 @@ async def connect_school_group(message: Message, bot: Bot):
         return
     payload = message.text.split(maxsplit=1)[1].strip()
     try:
+        bot_profile = await bot.get_me()
+        bot_member = await bot.get_chat_member(message.chat.id, bot_profile.id)
+        if bot_member.status not in {"administrator", "creator"}:
+            await message.answer(
+                "برای اتصال، ابتدا ربات را در این گروه مدیر کن و سپس دوباره تلاش کن."
+            )
+            return
         group_member = await bot.get_chat_member(message.chat.id, message.from_user.id)
     except Exception:
         await message.answer(
-            "برای اتصال مدرسه، ربات باید مدیر این گروه باشد تا بتواند مدیر گروه را بررسی کند."
+            "امکان بررسی دسترسی مدیر گروه وجود ندارد. مطمئن شو ربات مدیر گروه است."
         )
         return
     if group_member.status not in {"administrator", "creator"}:
@@ -268,11 +275,13 @@ async def connect_school_group(message: Message, bot: Bot):
             actor = await _user(session, message.from_user, private=False)
             now = datetime.now(timezone.utc)
             school = await session.scalar(
-                select(School).where(
+                select(School)
+                .where(
                     School.group_link_token_hash == hash_code(payload),
                     School.group_link_token_expires_at > now,
                     School.is_active.is_(True),
                 )
+                .with_for_update()
             )
             if school is None:
                 await message.answer(
@@ -796,22 +805,31 @@ async def connect_group(message: Message, bot: Bot):
         await message.answer("قالب: /connect کد_اتصال")
         return
     try:
+        bot_profile = await bot.get_me()
+        bot_member = await bot.get_chat_member(message.chat.id, bot_profile.id)
+        if bot_member.status not in {"administrator", "creator"}:
+            await message.answer(
+                "برای اتصال کلاس، ابتدا ربات را در این گروه مدیر کن و دوباره تلاش کن."
+            )
+            return
         member = await bot.get_chat_member(message.chat.id, message.from_user.id)
         if member.status not in {"administrator", "creator"}:
             await message.answer("فقط مدیر گروه می‌تواند اتصال را انجام دهد.")
             return
     except Exception:
-        await message.answer("امکان بررسی دسترسی مدیر گروه وجود ندارد. دوباره تلاش کن.")
+        await message.answer("امکان بررسی دسترسی مدیر گروه وجود ندارد. مطمئن شو ربات مدیر گروه است.")
         return
     async with SessionFactory() as session:
         async with session.begin():
             await _user(session, message.from_user)
             class_group = await session.scalar(
-                select(ClassGroup).where(
+                select(ClassGroup)
+                .where(
                     ClassGroup.group_link_code_hash == hash_code(code),
                     ClassGroup.group_link_code_expires_at > datetime.now(timezone.utc),
                     ClassGroup.is_active.is_(True),
                 )
+                .with_for_update()
             )
             if class_group is None:
                 await message.answer("کد اتصال نامعتبر یا قبلاً مصرف شده است.")
