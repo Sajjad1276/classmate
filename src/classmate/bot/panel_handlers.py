@@ -61,6 +61,7 @@ from classmate.services.records import (
     list_pending_records,
     list_daily_summary,
     list_current_timetable,
+    get_record_submitter_telegram_id,
     normalize_subject_name,
     reject_record,
 )
@@ -1167,6 +1168,9 @@ async def review_callback(callback: CallbackQuery, state: FSMContext):
                 await callback.answer("مجوز بررسی این کلاس را نداری.", show_alert=True)
                 return
             class_group, _, school = context
+            submitter_telegram_id = await get_record_submitter_telegram_id(
+                session, entity_type, entity_id, class_id
+            )
             if action == "approve":
                 success, response = await approve_record(
                     session, entity_type, entity_id, user.id, school.id,
@@ -1179,18 +1183,38 @@ async def review_callback(callback: CallbackQuery, state: FSMContext):
                 )
     await callback.answer(response, show_alert=not success)
     if success:
+        entity_labels = {
+            "homework": "تکلیف",
+            "exam": "امتحان",
+            "report": "گزارش روزانه",
+        }
+        entity_label = entity_labels.get(entity_type, "اطلاعات")
         if class_group.group_chat_id:
             try:
                 await callback.bot.send_message(
                     class_group.group_chat_id,
-                    f"اطلاعات {entity_type} با شناسه {entity_id} بررسی شد.",
+                    f"{'✅' if action == 'approve' else '❌'} "
+                    f"{entity_label} ثبت‌شده بررسی شد.",
                 )
             except Exception:
                 logger.exception("Failed to notify class group after review")
+        if submitter_telegram_id is not None:
+            try:
+                message_text = (
+                    f"✅ {entity_label} ثبت‌شدهٔ تو تأیید شد و اکنون در اطلاعات قطعی کلاس نمایش داده می‌شود."
+                    if action == "approve"
+                    else f"❌ {entity_label} ثبت‌شدهٔ تو رد شد. برای جزئیات با مدیر کلاس تماس بگیر."
+                )
+                await callback.bot.send_message(submitter_telegram_id, message_text)
+            except Exception:
+                logger.info(
+                    "Could not privately notify submitter %s about %s #%s",
+                    submitter_telegram_id, entity_type, entity_id,
+                    exc_info=True,
+                )
         await _show_pending_from_message(
             callback.message, state, callback.bot, class_id, callback.from_user
         )
-
 
 def _parse_persian_int(value: str) -> int:
     """Parse integers written with Persian or Arabic-Indic digits as well as ASCII."""
