@@ -21,6 +21,7 @@ from classmate.bot.handlers import (
     WEEKDAYS,
     _classes_for_user,
     _ensure_group_member,
+    _format_daily_summary,
     _format_exams,
     _format_homework,
     _parse_pipe_args,
@@ -446,17 +447,9 @@ async def _show_action(
                 reports, homework_rows, exam_rows = await list_daily_summary(
                     session, class_id, today, school.timezone
                 )
-        parts = [f"🗓 <b>خلاصه امروز — {jalali_date(today)}</b>"]
-        if reports:
-            parts.extend(
-                f"\n🗒 <b>{escape(report.title or 'گزارش روزانه')}</b>\n{escape(report.body)}"
-                for report in reports
-            )
-        else:
-            parts.append("\n🗒 گزارش تأییدشده‌ای برای امروز ثبت نشده است.")
-        parts.append("\n" + _format_homework(homework_rows))
-        parts.append("\n" + _format_exams(exam_rows, school.timezone))
-        body = "\n".join(parts)
+        body = _format_daily_summary(
+            reports, homework_rows, exam_rows, today, school.timezone
+        )
     elif action == "week":
         async with SessionFactory() as session:
             async with session.begin():
