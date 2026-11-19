@@ -16,7 +16,7 @@ from classmate.db.models import (
     User,
 )
 from classmate.domain.enums import RecordStatus, ReminderStatus, Role
-from classmate.services.permissions import can_approve, is_school_admin, user_can_access_class
+from classmate.services.permissions import can_approve, can_manage_class, is_school_admin, user_can_access_class
 from classmate.services.records import (
     add_subject,
     approve_record,
@@ -149,13 +149,21 @@ async def test_soft_delete_subject_cascades_to_links_and_can_be_restored(db_sess
 async def test_role_permissions_for_trusted_approver_and_school_admin(db_session):
     school, class_group, creator, approver, subject = await _seed_class(db_session)
     assert await can_approve(db_session, approver, class_group.id)
+    assert not await can_manage_class(db_session, approver, class_group.id)
     assert await user_can_access_class(db_session, approver, class_group.id)
+    manager = User(telegram_id=910000004, full_name="Class Manager")
+    db_session.add(manager)
+    await db_session.flush()
+    db_session.add(ClassMembership(class_id=class_group.id, user_id=manager.id, role=Role.CLASS_MANAGER))
+    await db_session.flush()
+    assert await can_manage_class(db_session, manager, class_group.id)
     school_admin = User(telegram_id=910000003, full_name="School Admin")
     db_session.add(school_admin)
     await db_session.flush()
     db_session.add(SchoolMembership(school_id=school.id, user_id=school_admin.id, role=Role.SCHOOL_ADMIN))
     await db_session.flush()
     assert await is_school_admin(db_session, school_admin, school.id)
+    assert await can_manage_class(db_session, school_admin, class_group.id)
     assert await user_can_access_class(db_session, school_admin, class_group.id)
 
 
