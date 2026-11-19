@@ -78,7 +78,7 @@ from classmate.domain.dates import (
 )
 from classmate.domain.enums import RecordType, Role
 from classmate.domain.errors import DomainError, Forbidden
-from classmate.domain.text import normalize_name, parse_positive_int
+from classmate.domain.text import normalize_name, normalize_digits, parse_positive_int
 from classmate.presentation.telegram.formatting import html
 from classmate.presentation.telegram.keyboards import (
     class_dashboard,
@@ -1584,6 +1584,87 @@ async def form_input(message: Message, state: FSMContext, bot: Bot) -> None:
                             section=None if value == "-" else value,
                         )
                 await _finish_flow(message, state, f"✅ کلاس «{html(item.name)}» ساخته شد.")
+                return
+
+        if flow == "class_manager_assign":
+            if step != "telegram_id":
+                raise DomainError("مرحله تعیین مدیر کلاس نامعتبر است.")
+            telegram_id = parse_positive_int(value)
+            async with SessionFactory() as session:
+                async with session.begin():
+                    target = await session.scalar(
+                        select(User).where(
+                            User.telegram_id == telegram_id,
+                            User.is_active.is_(True),
+                            User.private_chat_started.is_(True),
+                        )
+                    )
+                    if target is None:
+                        raise DomainError("این کاربر هنوز ربات را در گفت‌وگوی خصوصی Start نکرده است.")
+                    membership = await assign_class_manager(
+                        session, user, int(data["class_id"]), target
+                    )
+            await _finish_flow(
+                message, state,
+                f"✅ {html(target.full_name)} مدیر کلاس شد.",
+                class_id=int(data["class_id"]),
+            )
+            return
+
+        if flow == "timetable_create":
+            weekdays = ["شنبه", "یکشنبه", "دوشنبه", "سه‌شنبه", "چهارشنبه", "پنجشنبه", "جمعه"]
+            if step == "weekday":
+                normalized = normalize_digits(value).strip()
+                if normalized.isdigit() and 0 <= int(normalized) <= 6:
+                    weekday = int(normalized)
+                else:
+                    try:
+                        weekday = weekdays.index(value.strip())
+                    except ValueError as exc:
+                        raise DomainError("روز را از شنبه تا جمعه یا با عدد ۰ تا ۶ وارد کن.") from exc
+                await state.update_data(weekday=weekday, step="period")
+                await _edit_saved_prompt(message, state, "شماره زنگ را وارد کن؛ عددی بین ۱ تا ۱۵.")
+                return
+            if step == "period":
+                period = parse_positive_int(value, maximum=15)
+                await state.update_data(period=period, step="time")
+                await _edit_saved_prompt(
+                    message,
+                    state,
+                    "بازه ساعت را به شکل ۰۸:۰۰-۰۸:۴۵ وارد کن؛ اگر ساعت مشخص نیست «-» بفرست.",
+                )
+                return
+            if step == "time":
+                if value == "-":
+                    starts_at = None
+                    ends_at = None
+                else:
+                    try:
+                        start_raw, end_raw = value.split("-", 1)
+                        starts_at = time.fromisoformat(normalize_digits(start_raw.strip()))
+                        ends_at = time.fromisoformat(normalize_digits(end_raw.strip()))
+                    except ValueError as exc:
+                        raise DomainError("قالب ساعت معتبر نیست؛ نمونه: ۰۸:۰۰-۰۸:۴۵") from exc
+                    if starts_at >= ends_at:
+                        raise DomainError("ساعت پایان باید بعد از ساعت شروع باشد.")
+                async with SessionFactory() as session:
+                    async with session.begin():
+                        slot = await set_timetable_slot(
+                            session,
+                            user,
+                            int(data["class_id"]),
+                            weekday=int(data["weekday"]),
+                            period=int(data["period"]),
+                            subject_id=int(data["subject_id"]),
+                            starts_at=starts_at,
+                            ends_at=ends_at,
+                        )
+                await _finish_flow(
+                    message,
+                    state,
+                    f"✅ زنگ {slot.period} روز {weekdays[slot.weekday]} ثبت شد.",
+                    class_id=int(data["class_id"]),
+                )
                 return
 
         if flow == "subject_add":
