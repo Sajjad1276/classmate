@@ -708,6 +708,27 @@ async def _create_class_codes(callback: CallbackQuery, state: FSMContext, class_
     )
 
 
+@router.message(
+    F.chat.type == "private",
+    F.text.startswith("/") & ~F.text.startswith("/start"),
+)
+async def private_slash_command_notice(message: Message):
+    _, roles = await _current_user(message)
+    try:
+        await message.delete()
+    except TelegramBadRequest:
+        pass
+    await message.answer(
+        "در گفت‌وگوی خصوصی، فرمان تایپ نکن. عملیات را از دکمه‌های پایین صفحه انتخاب کن.",
+        reply_markup=main_reply_keyboard(
+            is_platform_admin=roles["platform"],
+            is_school_admin=roles["school"],
+            is_class_manager=roles["manager"],
+            is_approver=roles["approver"],
+        ),
+    )
+
+
 @router.message(F.chat.type == "private", F.text.in_(MAIN_BUTTONS))
 async def main_button_handler(message: Message, state: FSMContext, bot: Bot) -> None:
     label = (message.text or "").strip()
