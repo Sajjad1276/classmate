@@ -1083,6 +1083,52 @@ async def platform_callback(callback: CallbackQuery, state: FSMContext) -> None:
     await _edit(callback, state, "🛡 <b>پنل مدیر کل</b>", menu(rows))
 
 
+async def _show_school_panel(
+    target: Message | CallbackQuery,
+    state: FSMContext,
+    user: User,
+    school_id: int,
+) -> None:
+    async with SessionFactory() as session:
+        async with session.begin():
+            school = await session.get(School, school_id)
+            if school is None or not await school_admin_for(session, user, school_id):
+                raise Forbidden("به این مدرسه دسترسی نداری.")
+            years = list(
+                (
+                    await session.scalars(
+                        select(AcademicYear)
+                        .where(AcademicYear.school_id == school_id)
+                        .order_by(AcademicYear.is_current.desc(), AcademicYear.name.desc())
+                    )
+                ).all()
+            )
+    rows = [
+        [button("➕ ایجاد سال تحصیلی", f"v2:school:create_year:{school_id}")],
+    ]
+    if user.is_platform_admin:
+        rows.append(
+            [button("👤 تعیین مدیر مدرسه", f"v2:school:assign_admin:{school_id}")]
+        )
+    if years:
+        rows.extend([
+            [button(
+                f"🏫 ساخت کلاس در {year.name}{' · جاری' if year.is_current else ''}",
+                f"v2:school:create_class:{school_id}:{year.id}",
+            )]
+            for year in years
+        ])
+    rows.append([button("🔗 اتصال گروه مرکزی", f"v2:school:grouplink:{school_id}")])
+    await _edit(
+        target,
+        state,
+        f"🏢 <b>{html(school.name)}</b>\\n"
+        f"منطقه زمانی: {html(school.timezone)}\\n"
+        f"تعداد سال‌های تحصیلی: {len(years)}",
+        menu(rows, "v2:schools:manage"),
+    )
+
+
 @router.callback_query(
     (F.data == "v2:school:create") | F.data.startswith("v2:school:open:")
 )
@@ -1105,44 +1151,10 @@ async def school_callback(callback: CallbackQuery, state: FSMContext) -> None:
     except ValueError:
         await callback.answer("شناسه مدرسه معتبر نیست.", show_alert=True)
         return
-    async with SessionFactory() as session:
-        async with session.begin():
-            school = await session.get(School, school_id)
-            if school is None or not await school_admin_for(session, user, school_id):
-                await callback.answer("به این مدرسه دسترسی نداری.", show_alert=True)
-                return
-            years = list(
-                (
-                    await session.scalars(
-                        select(AcademicYear)
-                        .where(AcademicYear.school_id == school_id)
-                        .order_by(AcademicYear.is_current.desc(), AcademicYear.name.desc())
-                    )
-                ).all()
-            )
-    rows = [
-        [button("➕ ایجاد سال تحصیلی", f"v2:school:create_year:{school_id}")],
-        [button("➕ تعیین مدیر مدرسه", f"v2:school:assign_admin:{school_id}")]
-        if user.is_platform_admin else [],
-    ]
-    rows = [row for row in rows if row]
-    if years:
-        rows.extend([
-            [button(
-                f"🏫 ساخت کلاس در {year.name}{' · جاری' if year.is_current else ''}",
-                f"v2:school:create_class:{school_id}:{year.id}",
-            )]
-            for year in years
-        ])
-    rows.append([button("🔗 اتصال گروه مرکزی", f"v2:school:grouplink:{school_id}")])
-    await _edit(
-        callback,
-        state,
-        f"🏢 <b>{html(school.name)}</b>\n"
-        f"منطقه زمانی: {html(school.timezone)}\n"
-        f"تعداد سال‌های تحصیلی: {len(years)}",
-        menu(rows, "v2:schools:manage"),
-    )
+    try:
+        await _show_school_panel(callback, state, user, school_id)
+    except DomainError as exc:
+        await callback.answer(str(exc), show_alert=True)
 
 
 @router.callback_query(F.data.startswith("v2:school:create_year:"))
