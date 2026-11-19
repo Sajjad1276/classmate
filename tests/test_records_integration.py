@@ -146,13 +146,22 @@ async def test_soft_delete_subject_cascades_to_links_and_can_be_restored(db_sess
     db_session.add(entry)
     await db_session.flush()
 
-    assert await soft_delete_subject(db_session, subject.id)
-    assert subject.deleted_at is not None
+    # A class-level removal predates the global archive and must remain removed afterwards.
+    assert await soft_delete_class_subject(db_session, class_group.id, subject.id)
     link = await db_session.scalar(
         select(ClassSubject).where(ClassSubject.subject_id == subject.id)
     )
-    assert link.deleted_at is not None
-    assert entry.deleted_at is not None
+    class_level_deleted_at = link.deleted_at
+    assert class_level_deleted_at is not None
+
+    # Restore this class link to prepare one active link for the global archive.
+    link.deleted_at = None
+    await db_session.flush()
+    assert await soft_delete_subject(db_session, subject.id)
+    assert subject.deleted_at is not None
+    globally_archived_at = subject.deleted_at
+    assert link.deleted_at == globally_archived_at
+    assert entry.deleted_at == globally_archived_at
     assert await get_subject(db_session, class_group.id, school.id, "Mathematics") is None
 
     with pytest.raises(ValueError, match="آرشیو شده"):
