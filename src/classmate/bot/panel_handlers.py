@@ -77,6 +77,7 @@ MAIN_BUTTONS = {
     "🗒 گزارش امروز",
     "🔎 جست‌وجو",
     "🔔 یادآوری",
+    "ℹ️ راهنمای استفاده",
     "🕓 صف بررسی",
     "⚙️ مدیریت کلاس",
     "🏢 مدیریت مدرسه",
@@ -751,6 +752,16 @@ async def main_button_handler(message: Message, state: FSMContext, bot: Bot) -> 
                 is_class_manager=roles["manager"],
                 is_approver=roles["approver"],
             ),
+        )
+        return
+    if label == "ℹ️ راهنمای استفاده":
+        await _render_from_message(
+            message, state, bot,
+            "ℹ️ <b>راهنمای ClassMate</b>\\n"
+            "تمام عملیات از دکمه‌های کیبورد پایین صفحه آغاز می‌شوند.\\n"
+            "برای ورود به کلاس از «عضویت در کلاس» استفاده کن؛ برای ثبت تکلیف، امتحان یا گزارش «ثبت اطلاعات» را بزن.\\n"
+            "هر پنل داخلی دکمه بازگشت دارد و فقط نقش‌های مجاز، گزینه‌های مدیریتی و صف بررسی را می‌بینند.",
+            _markup([]),
         )
         return
     if label == "🔑 عضویت در کلاس":
