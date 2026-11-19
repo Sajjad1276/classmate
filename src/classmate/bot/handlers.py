@@ -15,6 +15,7 @@ from classmate.bot.keyboards import (
     class_picker,
     main_menu,
     main_reply_keyboard,
+    wizard_cancel_keyboard,
     new_record_menu,
     subject_picker,
 )
@@ -813,6 +814,12 @@ async def _start_wizard(
         return
     await state.clear()
     await state.update_data(record_type=kind, source_chat_id=chat_id)
+    if chat_id == from_user.id:
+        await bot.send_message(
+            chat_id,
+            "فرایند ثبت آغاز شد. برای خروج، دکمه «❌ لغو عملیات» را بزن.",
+            reply_markup=wizard_cancel_keyboard(),
+        )
     if len(classes) == 1:
         await _choose_class_for_wizard(classes[0].id, chat_id, state, bot)
     else:
@@ -857,6 +864,10 @@ async def new_record_callback(callback: CallbackQuery, state: FSMContext, bot: B
         await callback.answer("نوع ثبت نامعتبر است.", show_alert=True)
         return
     await callback.answer()
+    try:
+        await callback.message.edit_text("فرایند ثبت آغاز شد؛ پاسخ‌ها را به‌ترتیب وارد کن.")
+    except Exception:
+        pass
     await _start_wizard(callback.message.chat.id, callback.from_user, kind, state, bot)
 
 
@@ -948,11 +959,43 @@ async def _submit_pending(
             record_id = record.id
             class_snapshot = class_group
             creator_name = user.full_name
+            platform_admin = user.is_platform_admin
+            school_admin = platform_admin or (
+                await session.scalar(
+                    select(SchoolMembership.id).where(
+                        SchoolMembership.user_id == user.id,
+                        SchoolMembership.role == "school_admin",
+                        SchoolMembership.is_active.is_(True),
+                    )
+                )
+            ) is not None
+            class_roles = set(
+                (
+                    await session.scalars(
+                        select(ClassMembership.role).where(
+                            ClassMembership.user_id == user.id,
+                            ClassMembership.is_active.is_(True),
+                        )
+                    )
+                ).all()
+            )
+            class_manager = "class_manager" in class_roles
+            approver = school_admin or class_manager or "trusted_approver" in class_roles
     await state.clear()
     await bot.send_message(
         chat_id,
         "✅ درخواست ثبت شد و تا زمان تأیید قطعی نیست.\n"
-        f"شناسه درخواست: <code>{record_id}</code>"
+        f"شناسه درخواست: <code>{record_id}</code>",
+        reply_markup=(
+            main_reply_keyboard(
+                is_platform_admin=platform_admin,
+                is_school_admin=school_admin,
+                is_class_manager=class_manager,
+                is_approver=approver,
+            )
+            if chat_id == from_user.id
+            else None
+        ),
     )
     await _pending_message(
         bot, class_snapshot, entity_type, record_id, title, details, creator_name
