@@ -390,8 +390,8 @@ async def cancel_approved_record(
         "record_cancelled",
         entity_type,
         entity_id,
-        {"status": "APPROVED"},
         {"status": "CANCELLED"},
+        {"status": "APPROVED"},
     )
     label = "تکلیف" if entity_type == "homework" else "امتحان"
     return True, f"✅ {label} لغو شد؛ یادآوری‌های ارسال‌نشده نیز لغو شدند."
