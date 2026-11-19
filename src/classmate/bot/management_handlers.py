@@ -5,11 +5,13 @@ from aiogram.types import Message
 from classmate.bot.handlers import _user
 from classmate.db.models import Subject, TimetableEntry
 from classmate.db.session import SessionFactory
-from classmate.services.permissions import can_manage_class, get_class_with_school
+from classmate.services.permissions import can_manage_class, get_class_with_school, is_school_admin
 from classmate.services.records import (
     audit,
     soft_delete_class_subject,
     soft_delete_timetable_entry,
+    soft_delete_subject,
+    restore_subject,
 )
 
 router = Router(name="classmate_management")
@@ -88,3 +90,75 @@ async def timetable_remove_command(message: Message) -> None:
                 {**before, "deleted": False},
             )
     await message.answer("✅ زنگ برنامه حذف نرم شد؛ تاریخچه و ارتباطات قبلی حفظ شده‌اند.")
+
+
+@router.message(Command("subject_archive"))
+async def subject_archive_command(message: Message) -> None:
+    if message.chat.type != "private":
+        await message.answer("برای آرشیو سراسری درس، فرمان را در گفت‌وگوی خصوصی ربات اجرا کن.")
+        return
+    parts = (message.text or "").split()
+    if len(parts) != 2 or not parts[1].isdigit():
+        await message.answer("قالب: /subject_archive شناسه_درس")
+        return
+    subject_id = int(parts[1])
+    async with SessionFactory() as session:
+        async with session.begin():
+            user = await _user(session, message.from_user, private=True)
+            subject = await session.get(Subject, subject_id)
+            if subject is None:
+                await message.answer("درس پیدا نشد.")
+                return
+            if not await is_school_admin(session, user, subject.school_id):
+                await message.answer("فقط مدیر همان مدرسه یا مدیر کل می‌تواند درس را در سطح مدرسه آرشیو کند.")
+                return
+            archived = await soft_delete_subject(session, subject_id)
+            if not archived:
+                await message.answer("این درس قبلاً آرشیو شده است.")
+                return
+            await audit(
+                session, subject.school_id, None, user.id, "subject_archive",
+                "subject", subject_id,
+                {"deleted": True, "name": subject.name},
+                {"deleted": False, "name": subject.name},
+            )
+            subject_name = subject.name
+    await message.answer(
+        f"✅ درس «{subject_name}» در سطح مدرسه آرشیو شد؛ در همه کلاس‌ها و برنامه‌ها پنهان است، اما سوابق تاریخی حذف نشده‌اند."
+    )
+
+
+@router.message(Command("subject_restore"))
+async def subject_restore_command(message: Message) -> None:
+    if message.chat.type != "private":
+        await message.answer("برای بازیابی درس آرشیوشده، فرمان را در گفت‌وگوی خصوصی ربات اجرا کن.")
+        return
+    parts = (message.text or "").split()
+    if len(parts) != 2 or not parts[1].isdigit():
+        await message.answer("قالب: /subject_restore شناسه_درس")
+        return
+    subject_id = int(parts[1])
+    async with SessionFactory() as session:
+        async with session.begin():
+            user = await _user(session, message.from_user, private=True)
+            subject = await session.get(Subject, subject_id)
+            if subject is None:
+                await message.answer("درس پیدا نشد.")
+                return
+            if not await is_school_admin(session, user, subject.school_id):
+                await message.answer("فقط مدیر همان مدرسه یا مدیر کل می‌تواند درس را بازیابی کند.")
+                return
+            restored = await restore_subject(session, subject_id)
+            if not restored:
+                await message.answer("این درس آرشیو نشده است.")
+                return
+            await audit(
+                session, subject.school_id, None, user.id, "subject_restore",
+                "subject", subject_id,
+                {"deleted": False, "name": subject.name},
+                {"deleted": True, "name": subject.name},
+            )
+            subject_name = subject.name
+    await message.answer(
+        f"✅ درس «{subject_name}» بازیابی شد و اتصال‌های قبلی کلاس‌ها و زنگ‌های برنامه نیز برگردانده شدند."
+    )
