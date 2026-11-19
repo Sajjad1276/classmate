@@ -642,6 +642,8 @@ async def _show_form(
 
 
 def _parent_for_form(form_name: str, class_id: int | None) -> str:
+    if form_name == "join":
+        return "ui:classes"
     if class_id is not None:
         return f"ui:manage:{class_id}"
     if form_name in {"school_new", "school_admin_add"}:
@@ -1199,7 +1201,9 @@ async def _handle_panel_input(message: Message, state: FSMContext, bot: Bot) -> 
                 else:
                     raise ValueError("این فرم شناخته نشده است.")
         await state.update_data(panel_form=None)
-        if class_id:
+        if form_name == "join":
+            back = "ui:classes"
+        elif class_id:
             back = f"ui:manage:{class_id}"
         elif form_name in {"school_new", "school_admin_add"}:
             back = "ui:platform"
