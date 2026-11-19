@@ -144,7 +144,7 @@ async def run_worker() -> None:
                 await finish_job(job.id, job.lease_started_at, str(exc), job.attempts)
             except Exception as exc:
                 logger.exception("Unexpected error sending reminder job %s", job.id)
-                await finish_job(job.id, str(exc), job.attempts)
+                await finish_job(job.id, job.lease_started_at, str(exc), job.attempts)
     finally:
         await bot.session.close()
         await dispose_engine()
