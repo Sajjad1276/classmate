@@ -40,3 +40,9 @@ ENTITY_LABELS = {
     EntityType.EXAM: "امتحان",
     EntityType.REPORT: "گزارش روزانه",
 }
+
+
+class UpdateStatus(StrEnum):
+    PROCESSING = "processing"
+    FAILED = "failed"
+    PROCESSED = "processed"
