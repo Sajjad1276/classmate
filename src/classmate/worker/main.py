@@ -39,6 +39,10 @@ def has_active_lease(job: ReminderJob, lease_started_at: datetime) -> bool:
     return job.status == "processing" and job.locked_at == lease_started_at
 
 
+def stale_lease_recovery_status(attempts: int) -> str:
+    return "failed" if attempts >= MAX_ATTEMPTS else "retry"
+
+
 async def claim_due_job() -> ReminderJobSnapshot | None:
     """Claim one due job with SKIP LOCKED so multiple workers do not claim the same row."""
     async with SessionFactory() as session:
@@ -58,9 +62,14 @@ async def claim_due_job() -> ReminderJobSnapshot | None:
                 )
             ).scalars().all()
             for item in stale:
-                item.status = "retry"
-                item.scheduled_at = now
-                item.last_error = "Recovered after an interrupted worker lease."
+                item.status = stale_lease_recovery_status(item.attempts)
+                if item.status == "retry":
+                    item.scheduled_at = now
+                    item.last_error = "Recovered after an interrupted worker lease."
+                else:
+                    item.last_error = (
+                        "Retry limit reached after the worker lease expired."
+                    )
                 item.locked_at = None
 
             job = await session.scalar(
