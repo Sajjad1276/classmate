@@ -97,6 +97,14 @@ async def claim_due_job() -> ReminderJobSnapshot | None:
             )
 
 
+async def lease_is_current(job_id: int, lease_started_at: datetime) -> bool:
+    """Re-check a lease immediately before performing the external Telegram send."""
+    async with SessionFactory() as session:
+        async with session.begin():
+            job = await session.get(ReminderJob, job_id)
+            return job is not None and has_active_lease(job, lease_started_at)
+
+
 async def finish_job(
     job_id: int,
     lease_started_at: datetime,
@@ -145,6 +153,9 @@ async def run_worker() -> None:
                 await asyncio.sleep(max(1, settings.reminder_poll_seconds))
                 continue
             try:
+                if not await lease_is_current(job.id, job.lease_started_at):
+                    logger.info("Skipping cancelled or superseded reminder job %s", job.id)
+                    continue
                 await bot.send_message(job.target_id, job.message_text)
                 await finish_job(job.id, job.lease_started_at)
                 logger.info("Reminder job %s delivered", job.id)
