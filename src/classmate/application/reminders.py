@@ -108,6 +108,20 @@ async def schedule_record(
                 scheduled_at=scheduled_at,
                 dedupe_key=dedupe_key,
             )
+            existing = await session.scalar(
+                select(ReminderJob)
+                .where(ReminderJob.dedupe_key == dedupe_key)
+                .with_for_update()
+            )
+            if existing is not None:
+                if existing.status == "cancelled":
+                    existing.status = "pending"
+                    existing.scheduled_at = scheduled_at
+                    existing.attempts = 0
+                    existing.last_error = None
+                    existing.locked_at = None
+                    created += 1
+                continue
             inserted = await session.scalar(
                 statement.on_conflict_do_nothing(
                     constraint="uq_reminder_dedupe_key"
