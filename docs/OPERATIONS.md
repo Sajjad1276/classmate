@@ -48,7 +48,7 @@ The production bot stores aiogram FSM state/data in PostgreSQL (`fsm_state_recor
 
 ## Class data removal
 
-Class managers, school administrators and platform administrators can soft-delete a class subject with `/subject_remove <class_id> <subject_id>` and a timetable slot with `/timetable_remove <class_id> <entry_id>` in the bot's private chat. The commands retain the underlying rows and write an audit event. Re-adding a removed subject or timetable slot restores the existing soft-deleted link/slot rather than creating a duplicate. A trusted approver is not a class manager and cannot archive class data.
+Class managers, school administrators and platform administrators can soft-delete a class subject with `/subject_remove <class_id> <subject_id>` and a timetable slot with `/timetable_remove <class_id> <entry_id>` in the bot's private chat. The commands retain the underlying rows and write an audit event. Re-adding a removed subject or timetable slot restores the existing soft-deleted link/slot rather than creating a duplicate. A trusted approver is not a class manager and cannot archive class data. A school administrator or platform administrator can archive a shared subject across the whole school with `/subject_archive <subject_id>` and restore it with `/subject_restore <subject_id>`; restoring returns its previous class links and timetable slots. Class managers cannot bypass a school-wide archive by re-adding the subject.
 
 ## Approved-record cancellation
 
