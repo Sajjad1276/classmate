@@ -5,16 +5,17 @@ from sqlalchemy import (
     BigInteger,
     Boolean,
     Date,
+    JSON,
     DateTime,
     ForeignKey,
     Index,
     Integer,
-    JSON,
     String,
     Text,
     Time,
     UniqueConstraint,
     func,
+    text,
 )
 from sqlalchemy.orm import Mapped, mapped_column, relationship
 
@@ -68,7 +69,15 @@ class SchoolMembership(TimestampMixin, Base):
 
 class AcademicYear(TimestampMixin, Base):
     __tablename__ = "academic_years"
-    __table_args__ = (UniqueConstraint("school_id", "name", name="uq_school_academic_year"),)
+    __table_args__ = (
+        UniqueConstraint("school_id", "name", name="uq_school_academic_year"),
+        Index(
+            "uq_one_current_academic_year_per_school",
+            "school_id",
+            unique=True,
+            postgresql_where=text("is_current = true"),
+        ),
+    )
 
     id: Mapped[int] = mapped_column(Integer, primary_key=True)
     school_id: Mapped[int] = mapped_column(ForeignKey("schools.id", ondelete="CASCADE"), index=True)
@@ -164,7 +173,7 @@ class LessonSession(TimestampMixin, Base):
 
 class DailyReport(TimestampMixin, Base):
     __tablename__ = "daily_reports"
-    __table_args__ = (UniqueConstraint("class_id", "report_date", name="uq_daily_report_class_date"),)
+    __table_args__ = (Index("ix_daily_report_class_date", "class_id", "report_date"),)
 
     id: Mapped[int] = mapped_column(Integer, primary_key=True)
     class_id: Mapped[int] = mapped_column(ForeignKey("classes.id", ondelete="CASCADE"), index=True)
@@ -302,3 +311,17 @@ class ProcessedUpdate(Base):
     processed_at: Mapped[datetime] = mapped_column(
         DateTime(timezone=True), server_default=func.now(), nullable=False
     )
+
+
+class BotState(Base):
+    """Persistent aiogram FSM state keyed by bot/chat/user/thread."""
+
+    __tablename__ = "bot_states"
+
+    key: Mapped[str] = mapped_column(String(512), primary_key=True)
+    state: Mapped[str | None] = mapped_column(String(160))
+    data: Mapped[dict[str, Any]] = mapped_column(JSON, default=dict, nullable=False)
+    updated_at: Mapped[datetime] = mapped_column(
+        DateTime(timezone=True), server_default=func.now(), onupdate=func.now(), nullable=False
+    )
+    expires_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), nullable=False, index=True)
