@@ -6,7 +6,7 @@ from zoneinfo import ZoneInfo
 from aiogram import Bot, F, Router
 from aiogram.filters import Command, CommandStart
 from aiogram.fsm.context import FSMContext
-from aiogram.types import CallbackQuery, Message
+from aiogram.types import BotCommandScopeChat, CallbackQuery, Message
 from sqlalchemy import or_, select
 from sqlalchemy.ext.asyncio import AsyncSession
 
@@ -241,7 +241,16 @@ def _parse_pipe_args(raw: str, count: int) -> list[str]:
 
 
 @router.message(CommandStart())
-async def start(message: Message, state: FSMContext):
+async def start(message: Message, state: FSMContext, bot: Bot):
+    if message.chat.type == "private":
+        await bot.delete_my_commands(scope=BotCommandScopeChat(chat_id=message.chat.id))
+    previous = await state.get_data()
+    panel_id = previous.get("panel_message_id")
+    if panel_id and message.chat.type == "private":
+        try:
+            await bot.delete_message(message.chat.id, panel_id)
+        except Exception:
+            pass
     await state.clear()
     async with SessionFactory() as session:
         async with session.begin():
@@ -266,68 +275,17 @@ async def start(message: Message, state: FSMContext):
 async def help_command(message: Message):
     await message.answer(
         "<b>راهنمای ClassMate</b>\n"
-        "/start — منوی اصلی\n"
-        "/classes — فهرست کلاس‌های من\n"
-        "/cancel — لغو فرم ثبت نیمه‌کاره\n"
-        "/school_new نام مدرسه | سال تحصیلی [| منطقه زمانی] — ساخت مدرسه (مدیر کل)\n"
-        "/class_new شناسه مدرسه | پایه | کلاس/شعبه | نام کلاس — ساخت کلاس\n"
-        "/school_admin_add شناسه مدرسه | شناسه تلگرام — تعیین مدیر مدرسه (مدیر کل)\n"
-        "/year_new شناسه مدرسه | سال تحصیلی — فعال‌سازی سال جدید\n"
-        "/class_manager_add شناسه کلاس | شناسه تلگرام — تعیین مدیر کلاس (مدیر مدرسه)\n"
-        "/class_code شناسه کلاس — تولید کد اتصال گروه و عضویت\n"
-        "/connect کد — اتصال گروه تلگرام (در گروه و توسط ادمین)\n"
-        "/join کد — عضویت در کلاس (در خصوصی)\n"
-        "/subject_add نام درس — افزودن درس (مدیر کلاس)\n"
-        "/new_homework — ثبت تکلیف\n/new_exam — ثبت امتحان\n/new_report — ثبت گزارش روزانه\n"
-        "/homework [شناسه کلاس] [نام درس] — تکالیف\n"
-        "/exams [شناسه کلاس] — امتحانات\n/today [شناسه کلاس] — گزارش امروز\n"
-        "/week [شناسه کلاس] — برنامه هفتگی\n"
-        "/timetable_set روز | زنگ | درس | شروع-پایان — تنظیم برنامه (مدیر کلاس)\n"
-        "/pending [شناسه کلاس] — درخواست‌های تأیید\n"
-        "/reminders_on شناسه_کلاس [homework|exams|all] — فعال‌سازی اعلان خصوصی\n"
-        "/reminders_off شناسه_کلاس [homework|exams|all] — غیرفعال‌سازی اعلان خصوصی\n"
-        "/ask عبارت — جست‌وجوی ساده در اطلاعات کلاس\n"
-        "/approver_add شناسه کلاس | شناسه تلگرام — افزودن تأییدکننده",
-        reply_markup=main_menu(),
+        "برای استفاده از ربات نیازی به تایپ فرمان نیست. از کیبورد پایین صفحه، بخش موردنظر را انتخاب کن.\n\n"
+        "🏫 کلاس‌های من: مشاهده کلاس‌ها و ورود به پنل هر کلاس\n"
+        "🔑 عضویت در کلاس: واردکردن کد دعوت\n"
+        "➕ ثبت اطلاعات: ثبت مرحله‌ای تکلیف، امتحان یا گزارش\n"
+        "📚 تکالیف و 📝 امتحانات: مشاهده موارد تأییدشده\n"
+        "📅 برنامه هفتگی و 🗒 گزارش امروز: مشاهده اطلاعات کلاس\n"
+        "🔎 جست‌وجو: یافتن تکلیف یا جلسه بعد\n"
+        "🔔 یادآوری: تنظیم اعلان‌های شخصی\n\n"
+        "گزینه‌های مدیریتی و بررسی فقط برای نقش‌های مجاز نمایش داده می‌شوند.",
+        reply_markup=main_reply_keyboard(),
     )
-
-
-@router.message(Command("classes"))
-async def classes_command(message: Message):
-    if message.chat.type != "private":
-        await message.answer("برای دیدن فهرست کلاس‌ها، /classes را در گفت‌وگوی خصوصی ربات اجرا کن.")
-        return
-    async with SessionFactory() as session:
-        async with session.begin():
-            user = await _user(session, message.from_user, private=True)
-            classes = await _classes_for_user(session, user)
-            rows = []
-            for item in classes:
-                context = await get_class_with_school(session, item.id)
-                school_name = context[2].name if context else "مدرسه نامشخص"
-                membership = await session.scalar(
-                    select(ClassMembership).where(
-                        ClassMembership.class_id == item.id,
-                        ClassMembership.user_id == user.id,
-                        ClassMembership.is_active.is_(True),
-                    )
-                )
-                if membership and membership.role == "class_manager":
-                    role_label = "مدیر کلاس"
-                elif membership and membership.role == "trusted_approver":
-                    role_label = "فرد مورد اعتماد"
-                elif membership:
-                    role_label = "دانش‌آموز"
-                else:
-                    role_label = "مدیر مدرسه/سامانه"
-                rows.append(
-                    f"• <b>{escape(item.name)}</b> — {escape(school_name)}\n"
-                    f"  شناسه: <code>{item.id}</code> | نقش: {role_label}"
-                )
-    if not rows:
-        await message.answer("هنوز به کلاسی متصل نیستی. برای عضویت، ابتدا /start و سپس /join کد_عضویت را اجرا کن.")
-        return
-    await message.answer("🏫 <b>کلاس‌های قابل‌دسترسی تو</b>\n\n" + "\n".join(rows))
 
 
 @router.callback_query(F.data == "menu:home")
