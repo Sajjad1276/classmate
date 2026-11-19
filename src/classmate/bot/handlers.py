@@ -216,8 +216,8 @@ def _format_homework(rows) -> str:
     lines = ["📚 <b>تکالیف تأییدشده</b>"]
     for homework, subject in rows[:5]:
         due = jalali_date(homework.due_on) if homework.due_on else "نامشخص"
-        description = homework.description[:240]
-        if len(homework.description) > 240:
+        description = (homework.description or "")[:240]
+        if homework.description and len(homework.description) > 240:
             description += "…"
         lines.append(
             f"\n• <b>{escape(subject.name[:60])}</b> — {escape(homework.title[:80])}\n"
@@ -260,9 +260,13 @@ def _format_daily_summary(reports, homework_rows, exam_rows, local_date, timezon
 
     parts.append(_format_homework(homework_rows[:4]))
     parts.append(_format_exams(exam_rows[:4], timezone_name))
-    omitted = max(0, len(reports) - 3) + max(0, len(homework_rows) - 4) + max(0, len(exam_rows) - 4)
-    if omitted:
-        parts.append(f"ℹ️ {omitted} مورد دیگر در خلاصهٔ امروز نمایش داده نشد.")
+    has_more = (
+        len(reports) > 3
+        or len(homework_rows) > 4
+        or len(exam_rows) > 4
+    )
+    if has_more:
+        parts.append("ℹ️ موارد بیشتری برای امروز وجود دارد که در این خلاصه نمایش داده نشد.")
     return "\n\n".join(parts)
 
 
