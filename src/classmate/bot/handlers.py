@@ -249,6 +249,16 @@ async def connect_school_group(message: Message, bot: Bot):
     if message.from_user is None or message.text is None:
         return
     payload = message.text.split(maxsplit=1)[1].strip()
+    try:
+        group_member = await bot.get_chat_member(message.chat.id, message.from_user.id)
+    except Exception:
+        await message.answer(
+            "برای اتصال مدرسه، ربات باید مدیر این گروه باشد تا بتواند مدیر گروه را بررسی کند."
+        )
+        return
+    if group_member.status not in {"administrator", "creator"}:
+        await message.answer("فقط مدیر گروه تلگرام می‌تواند اتصال مدرسه را انجام دهد.")
+        return
 
     async with SessionFactory() as session:
         async with session.begin():
