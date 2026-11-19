@@ -324,9 +324,9 @@ async def start(message: Message, state: FSMContext, bot: Bot):
                 else None
             )
     greeting = (
-        f"• درود بیکران 🕊 {escape(message.from_user.full_name)}، به ربات ClassMate خوش آمدید.\\n\\n"
-        "📇 - در اینجا می‌تونید امور مدرسه رو به صورت حرفه‌ای و پیشرفته مدیریت کنید.\\n\\n"
-        f"• آیدی شما : <code>{message.from_user.id}</code>\\n\\n"
+        f"• درود بیکران 🕊 {escape(message.from_user.full_name)}، به ربات ClassMate خوش آمدید.\n\n"
+        "📇 - در اینجا می‌تونید امور مدرسه رو به صورت حرفه‌ای و پیشرفته مدیریت کنید.\n\n"
+        f"• آیدی شما : <code>{message.from_user.id}</code>\n\n"
         "🪎جهت ادامه دستور مورد نظر رو از پنل زیر وارد کنید:"
     )
     await message.answer(greeting, reply_markup=keyboard)
