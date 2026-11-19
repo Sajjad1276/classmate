@@ -68,6 +68,11 @@ from classmate.services.records import (
 logger = logging.getLogger(__name__)
 router = Router(name="classmate_panels")
 
+def _is_panel_input_text(text: str | None) -> bool:
+    """Accept ordinary form text, but let Telegram slash commands reach command handlers."""
+    return bool(text and text.strip() and not text.lstrip().startswith("/"))
+
+
 MAIN_BUTTONS = {
     "🏫 کلاس‌های من",
     "🔑 عضویت در کلاس",
@@ -133,17 +138,13 @@ async def _render_from_message(
             if "message is not modified" in str(exc).lower():
                 return
             logger.info("Could not edit previous panel message: %s", exc)
+    # Attach the inline keyboard in the original send call so a form is never
+    # displayed without its cancel/back control, even if a follow-up edit fails.
     sent = await bot.send_message(
         message.chat.id,
         text,
-        reply_markup=ReplyKeyboardRemove(),
+        reply_markup=keyboard if keyboard is not None else ReplyKeyboardRemove(),
     )
-    if keyboard is not None:
-        await bot.edit_message_reply_markup(
-            chat_id=message.chat.id,
-            message_id=sent.message_id,
-            reply_markup=keyboard,
-        )
     await state.update_data(panel_message_id=sent.message_id)
 
 
@@ -679,7 +680,7 @@ async def _show_form(
 
 def _parent_for_form(form_name: str, class_id: int | None) -> str:
     if form_name == "join":
-        return "ui:classes"
+        return "ui:close"
     if form_name == "search" and class_id is not None:
         return f"ui:class:{class_id}"
     if class_id is not None:
@@ -1428,7 +1429,7 @@ async def _handle_search_input(message: Message, state: FSMContext, bot: Bot) ->
     )
 
 
-@router.message(PanelInput.input)
+@router.message(PanelInput.input, F.text.func(_is_panel_input_text))
 async def panel_text_input(message: Message, state: FSMContext, bot: Bot):
     try:
         await message.delete()
