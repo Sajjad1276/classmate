@@ -132,6 +132,7 @@ async def list_homework_for_lesson(
                     Homework.class_id == class_id,
                     Homework.subject_id == subject_id,
                     Homework.status == RecordStatus.APPROVED,
+                    Subject.deleted_at.is_(None),
                     (Homework.due_session_id == lesson.id)
                     | (Homework.due_on == lesson.starts_at.date()),
                 )
