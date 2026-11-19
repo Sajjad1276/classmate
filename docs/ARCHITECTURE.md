@@ -54,6 +54,10 @@ Workers claim due reminder rows via PostgreSQL FOR UPDATE SKIP LOCKED, set a pro
 
 Delivery is at-least-once, not exactly-once: if Telegram accepts a message and the worker crashes before persisting success, the recovered job may be sent again. Dedupe keys prevent duplicate scheduling for the same record/target/time, but cannot make Telegram delivery transactional with PostgreSQL.
 
+## Private reminder preferences
+
+NotificationPreference is scoped to user and class, with homework and exam categories independently enabled. The preference UI uses a PostgreSQL upsert to avoid duplicate rows on concurrent clicks. Turning a category off cancels queued/retry/processing private jobs for that user and class under row locks. Turning it on reconciles future APPROVED homework/exams by rescheduling only that user's private jobs; cancelled dedupe rows are reactivated and new rows use conflict-safe inserts. Group targets are not modified by a user's private preference. Users who have not started a private chat are excluded from private reminder scheduling.
+
 ## Telegram group interface and review
 
 A school may have one central group binding; each class may have its own group binding. A connected class group exposes an inline menu for approved homework, future exams, currently valid timetable slots, a local-day summary, new submissions and the review queue. The central school group is not treated as a class record feed. Group binding requires the invoking user to be a Telegram administrator/creator and the bot to have sufficient administrator visibility for membership checks.
