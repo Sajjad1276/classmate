@@ -1,4 +1,4 @@
-from datetime import date, datetime, time, timezone, datetime, time
+from datetime import date, datetime, time, timedelta, timezone
 from types import SimpleNamespace
 from zoneinfo import ZoneInfo
 
@@ -93,4 +93,4 @@ def test_local_day_window_tracks_daylight_saving_transition():
 
     assert start == datetime(2026, 3, 29, 0, 0, tzinfo=start.tzinfo)
     assert end == datetime(2026, 3, 30, 0, 0, tzinfo=end.tzinfo)
-    assert (end.astimezone(timezone.utc) - start.astimezone(timezone.utc)) == __import__("datetime").timedelta(hours=23)
+    assert (end.astimezone(timezone.utc) - start.astimezone(timezone.utc)) == timedelta(hours=23)
