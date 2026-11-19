@@ -582,7 +582,7 @@ async def _show_platform_panel(
         return
     rows = [
         [_button("🏫 ایجاد مدرسه و سال تحصیلی", "ui:form:school_new")],
-        [_button("👤 تعیین مدیر مدرسه", "ui:form:school_admin_add")],
+        [_button("👤 تعیین مدیر مدرسه", "ui:school_admin_schools")],
         [_button("📚 مدیریت مدرسه‌ها و کلاس‌ها", "ui:classes")],
     ]
     await _render_from_callback(
@@ -595,22 +595,67 @@ async def _show_platform_panel(
     )
 
 
+async def _admin_schools(tg_user) -> list[tuple[int, str]]:
+    """Return only active schools the current account is allowed to administer."""
+    async with SessionFactory() as session:
+        async with session.begin():
+            user = await _user(session, tg_user, private=True)
+            query = select(School).where(School.is_active.is_(True))
+            if not user.is_platform_admin:
+                query = query.join(
+                    SchoolMembership,
+                    SchoolMembership.school_id == School.id,
+                ).where(
+                    SchoolMembership.user_id == user.id,
+                    SchoolMembership.role == "school_admin",
+                    SchoolMembership.is_active.is_(True),
+                )
+            schools = (await session.scalars(query.order_by(School.name))).all()
+            return [(school.id, school.name) for school in schools]
+
+
 async def _show_school_panel(callback: CallbackQuery, state: FSMContext) -> None:
     _, roles = await _current_user(callback)
     if not roles["school"]:
         await callback.answer("این بخش فقط برای مدیر مدرسه است.", show_alert=True)
         return
+    schools = await _admin_schools(callback.from_user)
     rows = [
-        [_button("📅 ایجاد سال تحصیلی", "ui:form:year_new")],
-        [_button("🏫 ایجاد کلاس", "ui:form:class_new")],
-        [_button("👤 تعیین مدیر کلاس", "ui:form:class_manager_add")],
-        [_button("📚 مشاهده کلاس‌های مدرسه", "ui:classes")],
+        [_button(f"🏫 {name[:42]}", f"ui:school_manage:{school_id}")]
+        for school_id, name in schools
+    ]
+    body = (
+        "🏢 <b>مدیریت مدرسه</b>\nمدرسه‌ای را برای مدیریت انتخاب کن."
+        if schools
+        else "برای این حساب مدرسه فعالی جهت مدیریت ثبت نشده است."
+    )
+    await _render_from_callback(callback, state, body, _markup(rows, "ui:close"))
+
+
+async def _show_school_management(
+    callback: CallbackQuery,
+    state: FSMContext,
+    school_id: int,
+) -> None:
+    async with SessionFactory() as session:
+        async with session.begin():
+            user = await _user(session, callback.from_user, private=True)
+            school = await session.get(School, school_id)
+            if not school or not school.is_active or not await is_school_admin(session, user, school_id):
+                await callback.answer("به مدیریت این مدرسه دسترسی نداری.", show_alert=True)
+                return
+            school_name = school.name
+    rows = [
+        [_button("📅 ایجاد سال تحصیلی", f"ui:form:year_new:{school_id}")],
+        [_button("🏫 ایجاد کلاس", f"ui:form:class_new:{school_id}")],
+        [_button("👤 تعیین مدیر کلاس", f"ui:school_classes:{school_id}")],
+        [_button("📚 مشاهده کلاس‌های مدرسه", f"ui:school_classes_view:{school_id}")],
     ]
     await _render_from_callback(
         callback,
         state,
-        "🏢 <b>پنل مدیریت مدرسه</b>\nعملیات مربوط به سال تحصیلی، کلاس‌ها و مدیران کلاس.",
-        _markup(rows),
+        f"🏢 <b>{escape(school_name)}</b>\nعملیات مدیریتی این مدرسه را انتخاب کن.",
+        _markup(rows, "ui:school"),
     )
 
 
@@ -619,15 +664,16 @@ async def _show_form(
     state: FSMContext,
     form_name: str,
     class_id: int | None = None,
+    school_id: int | None = None,
 ) -> None:
     user, roles = await _current_user(callback)
     prompts = {
         "join": "کد دعوت کلاس را وارد کن.",
         "school_new": "نام مدرسه را وارد کن.",
-        "school_admin_add": "شناسه مدرسه | شناسه عددی تلگرام کاربر",
-        "year_new": "شناسه مدرسه | نام سال تحصیلی\nنمونه: 1 | ۱۴۰۶-۱۴۰۷",
-        "class_new": "شناسه مدرسه | پایه | شعبه | نام کلاس\nبرای نداشتن شعبه، - وارد کن.",
-        "class_manager_add": "شناسه کلاس | شناسه عددی تلگرام مدیر جدید",
+        "school_admin_add": "شناسه عددی تلگرام کاربر را وارد کن.",
+        "year_new": "نام سال تحصیلی را وارد کن.\nنمونه: ۱۴۰۶-۱۴۰۷",
+        "class_new": "پایه | شعبه | نام کلاس\nبرای نداشتن شعبه، - وارد کن. نمونه: دهم | الف | دهم تجربی ۱",
+        "class_manager_add": "شناسه عددی تلگرام مدیر جدید را وارد کن.",
         "class_code": "کدهای جدید برای کلاس انتخاب‌شده ساخته می‌شود.",
         "approver_add": "شناسه عددی تلگرام فرد مورد اعتماد را وارد کن.",
         "subject_add": "نام درس را وارد کن.",
@@ -645,6 +691,26 @@ async def _show_form(
         "class_new": roles["school"],
         "class_manager_add": roles["school"],
     }
+    if form_name in {"year_new", "class_new"}:
+        async with SessionFactory() as session:
+            async with session.begin():
+                actor = await _user(session, callback.from_user, private=True)
+                school = await session.get(School, school_id) if school_id else None
+                permitted[form_name] = bool(
+                    school and school.is_active
+                    and await is_school_admin(session, actor, school_id)
+                )
+    if form_name == "school_admin_add":
+        async with SessionFactory() as session:
+            async with session.begin():
+                actor = await _user(session, callback.from_user, private=True)
+                school = await session.get(School, school_id) if school_id else None
+                permitted[form_name] = bool(
+                    actor.is_platform_admin and school and school.is_active
+                )
+    if form_name == "class_manager_add" and class_id is not None:
+        context = await _class_context(class_id, callback.from_user)
+        permitted[form_name] = bool(context and context["is_school_admin"])
     if form_name in {"class_code", "approver_add", "subject_add", "timetable_set"}:
         context = await _class_context(class_id or 0, callback.from_user)
         if not context:
@@ -667,6 +733,7 @@ async def _show_form(
     await state.update_data(
         panel_form=form_name,
         panel_class_id=class_id,
+        panel_school_id=school_id,
         **({"school_name": None} if form_name == "school_new" else {}),
     )
     await _render_from_callback(
@@ -677,13 +744,19 @@ async def _show_form(
     )
 
 
-def _parent_for_form(form_name: str, class_id: int | None) -> str:
+def _parent_for_form(
+    form_name: str,
+    class_id: int | None,
+    school_id: int | None = None,
+) -> str:
     if form_name == "join":
         return "ui:classes"
     if form_name == "search" and class_id is not None:
         return f"ui:class:{class_id}"
     if class_id is not None:
         return f"ui:manage:{class_id}"
+    if form_name in {"year_new", "class_new"} and school_id is not None:
+        return f"ui:school_manage:{school_id}"
     if form_name in {"school_new", "school_admin_add"}:
         return "ui:platform"
     return "ui:school"
@@ -843,12 +916,16 @@ async def main_button_handler(message: Message, state: FSMContext, bot: Bot) -> 
         if not roles["school"]:
             await _render_from_message(message, state, bot, "این بخش فقط برای مدیر مدرسه است.", _markup([]))
             return
+        schools = await _admin_schools(message.from_user)
         rows = [
-            [_button("📅 ایجاد سال تحصیلی", "ui:form:year_new")],
-            [_button("🏫 ایجاد کلاس", "ui:form:class_new")],
-            [_button("👤 تعیین مدیر کلاس", "ui:form:class_manager_add")],
+            [_button(f"🏫 {name[:42]}", f"ui:school_manage:{school_id}")]
+            for school_id, name in schools
         ]
-        await _render_from_message(message, state, bot, "🏢 <b>پنل مدیریت مدرسه</b>", _markup(rows))
+        await _render_from_message(
+            message, state, bot,
+            "🏢 <b>مدیریت مدرسه</b>\nمدرسه‌ای را برای مدیریت انتخاب کن.",
+            _markup(rows),
+        )
         return
     if label == "🛡 پنل مدیر کل":
         _, roles = await _current_user(message)
@@ -857,7 +934,7 @@ async def main_button_handler(message: Message, state: FSMContext, bot: Bot) -> 
             return
         rows = [
             [_button("🏫 ایجاد مدرسه و سال تحصیلی", "ui:form:school_new")],
-            [_button("👤 تعیین مدیر مدرسه", "ui:form:school_admin_add")],
+            [_button("👤 تعیین مدیر مدرسه", "ui:school_admin_schools")],
         ]
         await _render_from_message(message, state, bot, "🛡 <b>پنل مدیر کل ClassMate</b>", _markup(rows))
         return
@@ -958,12 +1035,98 @@ async def school_panel(callback: CallbackQuery, state: FSMContext):
     await _show_school_panel(callback, state)
 
 
+@router.callback_query(F.data.startswith("ui:school_manage:"))
+async def school_management_panel(callback: CallbackQuery, state: FSMContext):
+    school_id = int(callback.data.rsplit(":", 1)[1])
+    await _show_school_management(callback, state, school_id)
+
+
+@router.callback_query(F.data == "ui:school_admin_schools")
+async def school_admin_school_selector(callback: CallbackQuery, state: FSMContext):
+    _, roles = await _current_user(callback)
+    if not roles["platform"]:
+        await callback.answer("این عملیات فقط برای مدیر کل است.", show_alert=True)
+        return
+    schools = await _admin_schools(callback.from_user)
+    rows = [
+        [_button(f"🏫 {name[:42]}", f"ui:form:school_admin_add:{school_id}")]
+        for school_id, name in schools
+    ]
+    await _render_from_callback(
+        callback, state,
+        "مدرسه‌ای را برای تعیین مدیر انتخاب کن:",
+        _markup(rows, "ui:platform"),
+    )
+
+
+@router.callback_query(F.data.startswith("ui:school_classes:"))
+async def school_class_manager_selector(callback: CallbackQuery, state: FSMContext):
+    school_id = int(callback.data.rsplit(":", 1)[1])
+    async with SessionFactory() as session:
+        async with session.begin():
+            user = await _user(session, callback.from_user, private=True)
+            school = await session.get(School, school_id)
+            if not school or not await is_school_admin(session, user, school_id):
+                await callback.answer("به این مدرسه دسترسی نداری.", show_alert=True)
+                return
+            classes = list((await session.scalars(
+                select(ClassGroup)
+                .join(AcademicYear, ClassGroup.academic_year_id == AcademicYear.id)
+                .where(
+                    AcademicYear.school_id == school_id,
+                    ClassGroup.is_active.is_(True),
+                )
+                .order_by(ClassGroup.name)
+            )).all())
+    rows = [
+        [_button(f"👤 {item.name[:42]}", f"ui:form:class_manager_add:{item.id}")]
+        for item in classes
+    ]
+    await _render_from_callback(
+        callback, state,
+        "کلاسی را برای تعیین مدیر انتخاب کن:" if classes else "هنوز کلاسی در این مدرسه ثبت نشده است.",
+        _markup(rows, f"ui:school_manage:{school_id}"),
+    )
+
+
+@router.callback_query(F.data.startswith("ui:school_classes_view:"))
+async def school_classes_view(callback: CallbackQuery, state: FSMContext):
+    school_id = int(callback.data.rsplit(":", 1)[1])
+    async with SessionFactory() as session:
+        async with session.begin():
+            user = await _user(session, callback.from_user, private=True)
+            school = await session.get(School, school_id)
+            if not school or not await is_school_admin(session, user, school_id):
+                await callback.answer("به این مدرسه دسترسی نداری.", show_alert=True)
+                return
+            rows_data = list((await session.execute(
+                select(ClassGroup, AcademicYear)
+                .join(AcademicYear, ClassGroup.academic_year_id == AcademicYear.id)
+                .where(
+                    AcademicYear.school_id == school_id,
+                    ClassGroup.is_active.is_(True),
+                )
+                .order_by(AcademicYear.name.desc(), ClassGroup.name)
+            )).all())
+    rows = [
+        [_button(f"🏫 {item.name[:36]} · {item.grade[:12]}", f"ui:class:{item.id}")]
+        for item, _year in rows_data
+    ]
+    body = "📚 کلاس‌های مدرسه:" if rows else "برای این مدرسه هنوز کلاسی ثبت نشده است."
+    await _render_from_callback(
+        callback, state, body, _markup(rows, f"ui:school_manage:{school_id}")
+    )
+
+
 @router.callback_query(F.data.startswith("ui:form:"))
 async def form_panel(callback: CallbackQuery, state: FSMContext):
     parts = callback.data.split(":")
     form_name = parts[2]
-    class_id = int(parts[3]) if len(parts) > 3 else None
-    await _show_form(callback, state, form_name, class_id)
+    context_id = int(parts[3]) if len(parts) > 3 else None
+    if form_name in {"year_new", "class_new", "school_admin_add"}:
+        await _show_form(callback, state, form_name, school_id=context_id)
+    else:
+        await _show_form(callback, state, form_name, class_id=context_id)
 
 
 @router.callback_query(F.data == "ui:cancel_input")
@@ -971,17 +1134,21 @@ async def cancel_input(callback: CallbackQuery, state: FSMContext):
     data = await state.get_data()
     form_name = data.get("panel_form")
     class_id = data.get("panel_class_id")
+    school_id = data.get("panel_school_id")
     await state.set_state(None)
     await state.update_data(
         panel_form=None,
+        panel_school_id=None,
         **({"school_name": None} if form_name == "school_new" else {}),
     )
-    parent = _parent_for_form(form_name or "", class_id)
+    parent = _parent_for_form(form_name or "", class_id, school_id)
     await callback.answer("عملیات لغو شد.")
     if parent == "ui:platform":
         await _show_platform_panel(callback, state)
     elif parent == "ui:school":
         await _show_school_panel(callback, state)
+    elif parent.startswith("ui:school_manage:"):
+        await _show_school_management(callback, state, int(parent.rsplit(":", 1)[1]))
     elif parent == "ui:classes":
         await _show_classes(callback, state, callback.from_user)
     elif parent.startswith("ui:class:"):
@@ -1044,6 +1211,7 @@ async def _handle_panel_input(message: Message, state: FSMContext, bot: Bot) -> 
     data = await state.get_data()
     form_name = data.get("panel_form")
     class_id = data.get("panel_class_id")
+    school_id = data.get("panel_school_id")
     await state.set_state(None)
     if not form_name:
         await _render_from_message(message, state, bot, "این فرم دیگر فعال نیست.", _markup([]))
@@ -1127,29 +1295,37 @@ async def _handle_panel_input(message: Message, state: FSMContext, bot: Bot) -> 
                         "این لینک تا ۲۴ ساعت معتبر است."
                     )
                 elif form_name == "school_admin_add":
-                    school_raw, telegram_raw = _parse_pipe_args(raw, 2)
-                    school_id, telegram_id = int(school_raw), int(telegram_raw)
                     if not actor.is_platform_admin:
                         raise PermissionError("فقط مدیر کل می‌تواند مدیر مدرسه تعیین کند.")
-                    school = await session.get(School, school_id)
+                    if school_id is not None:
+                        target_school_id = school_id
+                        telegram_id = _parse_persian_int(raw)
+                    else:
+                        school_raw, telegram_raw = _parse_pipe_args(raw, 2)
+                        target_school_id = _parse_persian_int(school_raw)
+                        telegram_id = _parse_persian_int(telegram_raw)
+                    school = await session.get(School, target_school_id)
                     target = await session.scalar(select(User).where(User.telegram_id == telegram_id))
                     if not school or not target:
                         raise ValueError("مدرسه یا کاربر پیدا نشد. کاربر باید ابتدا ربات را Start کرده باشد.")
                     membership = await session.scalar(
                         select(SchoolMembership).where(
-                            SchoolMembership.school_id == school_id,
+                            SchoolMembership.school_id == target_school_id,
                             SchoolMembership.user_id == target.id,
                         )
                     )
                     if membership is None:
-                        session.add(SchoolMembership(school_id=school_id, user_id=target.id, role="school_admin"))
+                        session.add(SchoolMembership(school_id=target_school_id, user_id=target.id, role="school_admin"))
                     else:
                         membership.role = "school_admin"
                         membership.is_active = True
                     result_text = "✅ مدیر مدرسه تعیین شد."
                 elif form_name == "year_new":
-                    school_raw, year_name = _parse_pipe_args(raw, 2)
-                    school_id = int(school_raw)
+                    if school_id is None:
+                        raise ValueError("مدرسه انتخاب نشده است؛ از پنل مدیریت دوباره شروع کن.")
+                    year_name = raw.strip()
+                    if not year_name or len(year_name) > 40:
+                        raise ValueError("نام سال تحصیلی باید بین ۱ تا ۴۰ نویسه باشد.")
                     if not await is_school_admin(session, actor, school_id):
                         raise PermissionError("مجوز مدیریت این مدرسه را نداری.")
                     school = await session.get(School, school_id)
@@ -1178,8 +1354,11 @@ async def _handle_panel_input(message: Message, state: FSMContext, bot: Bot) -> 
                     await session.flush()
                     result_text = f"✅ سال تحصیلی جدید فعال شد. شناسه: <code>{year.id}</code>"
                 elif form_name == "class_new":
-                    school_raw, grade, section, name = _parse_pipe_args(raw, 4)
-                    school_id = int(school_raw)
+                    if school_id is None:
+                        raise ValueError("مدرسه انتخاب نشده است؛ از پنل مدیریت دوباره شروع کن.")
+                    grade, section, name = _parse_pipe_args(raw, 3)
+                    if not grade or not name:
+                        raise ValueError("پایه و نام کلاس الزامی هستند.")
                     school = await session.get(School, school_id)
                     if not school or not await is_school_admin(session, actor, school_id):
                         raise PermissionError("مدرسه پیدا نشد یا مجوز مدیریت آن را نداری.")
@@ -1202,8 +1381,13 @@ async def _handle_panel_input(message: Message, state: FSMContext, bot: Bot) -> 
                     session.add(ClassMembership(class_id=item.id, user_id=actor.id, role="class_manager"))
                     result_text = f"✅ کلاس ایجاد شد. شناسه کلاس: <code>{item.id}</code>"
                 elif form_name == "class_manager_add":
-                    class_raw, telegram_raw = _parse_pipe_args(raw, 2)
-                    target_class_id, telegram_id = int(class_raw), int(telegram_raw)
+                    if class_id is not None:
+                        target_class_id = class_id
+                        telegram_id = _parse_persian_int(raw)
+                    else:
+                        class_raw, telegram_raw = _parse_pipe_args(raw, 2)
+                        target_class_id = _parse_persian_int(class_raw)
+                        telegram_id = _parse_persian_int(telegram_raw)
                     context = await get_class_with_school(session, target_class_id)
                     target = await session.scalar(select(User).where(User.telegram_id == telegram_id))
                     if not context or not target:
@@ -1341,11 +1525,17 @@ async def _handle_panel_input(message: Message, state: FSMContext, bot: Bot) -> 
                     )
                 else:
                     raise ValueError("این فرم شناخته نشده است.")
-        await state.update_data(panel_form=None, school_name=None)
+        await state.update_data(
+            panel_form=None,
+            panel_school_id=None,
+            school_name=None,
+        )
         if form_name == "join":
             back = "ui:classes"
         elif class_id:
             back = f"ui:manage:{class_id}"
+        elif form_name in {"year_new", "class_new"} and school_id is not None:
+            back = f"ui:school_manage:{school_id}"
         elif form_name in {"school_new", "school_admin_add"}:
             back = "ui:platform"
         else:
