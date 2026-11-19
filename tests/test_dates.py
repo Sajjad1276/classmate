@@ -1,11 +1,15 @@
-from datetime import date, datetime, time
+from datetime import date, datetime, time, timezone, datetime, time
 from types import SimpleNamespace
 from zoneinfo import ZoneInfo
 
 import pytest
 
 from classmate.domain.dates import normalize_digits, parse_school_date, persian_weekday
-from classmate.services.records import next_timetable_occurrence, normalize_subject_name
+from classmate.services.records import (
+    local_day_window,
+    next_timetable_occurrence,
+    normalize_subject_name,
+)
 
 
 def test_parse_jalali_date():
@@ -81,3 +85,12 @@ def test_next_timetable_occurrence_stops_after_valid_until():
     )
 
     assert next_timetable_occurrence(entry, now) is None
+
+
+
+def test_local_day_window_tracks_daylight_saving_transition():
+    start, end = local_day_window(date(2026, 3, 29), "Europe/Amsterdam")
+
+    assert start == datetime(2026, 3, 29, 0, 0, tzinfo=start.tzinfo)
+    assert end == datetime(2026, 3, 30, 0, 0, tzinfo=end.tzinfo)
+    assert (end.astimezone(timezone.utc) - start.astimezone(timezone.utc)) == __import__("datetime").timedelta(hours=23)
