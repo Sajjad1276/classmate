@@ -64,7 +64,7 @@ async def test_postgres_worker_marks_ambiguous_delivery_uncertain(monkeypatch):
         pytest.skip("DATABASE_URL is required for PostgreSQL worker integration tests")
     from datetime import datetime, timedelta, timezone
 
-    from classmate.db.models import ReminderJob
+    from classmate.db.models import AcademicYear, ClassGroup, ReminderJob, School
     from classmate.domain.enums import ReminderStatus
     from classmate.worker import main as worker_main
 
@@ -72,11 +72,25 @@ async def test_postgres_worker_marks_ambiguous_delivery_uncertain(monkeypatch):
     factory = async_sessionmaker(engine, expire_on_commit=False)
     monkeypatch.setattr(worker_main, "SessionFactory", factory)
     dedupe_key = f"runtime-uncertain:{time.time_ns()}"
+    school_name = f"Reminder worker test {time.time_ns()}"
+    school_id = None
+    class_id = None
     try:
         async with factory() as session:
             async with session.begin():
+                school = School(name=school_name, timezone="UTC")
+                session.add(school)
+                await session.flush()
+                year = AcademicYear(school_id=school.id, name="test-year")
+                session.add(year)
+                await session.flush()
+                class_group = ClassGroup(academic_year_id=year.id, name="test-class", grade="10")
+                session.add(class_group)
+                await session.flush()
+                school_id = school.id
+                class_id = class_group.id
                 row = ReminderJob(
-                    class_id=1,
+                    class_id=class_id,
                     entity_type="homework",
                     entity_id=1,
                     target_type="private",
@@ -98,4 +112,6 @@ async def test_postgres_worker_marks_ambiguous_delivery_uncertain(monkeypatch):
         async with factory() as session:
             async with session.begin():
                 await session.execute(delete(ReminderJob).where(ReminderJob.dedupe_key == dedupe_key))
+                if school_id is not None:
+                    await session.execute(delete(School).where(School.id == school_id))
         await engine.dispose()
