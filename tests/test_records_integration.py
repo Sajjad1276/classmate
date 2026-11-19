@@ -1,6 +1,7 @@
 from datetime import date, datetime, time, timedelta, timezone
 
 import pytest
+from sqlalchemy import select
 
 from classmate.db.models import (
     AcademicYear,
