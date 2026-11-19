@@ -1,3 +1,4 @@
+from datetime import datetime, timezone
 from html import escape
 
 from aiogram import Router
@@ -6,6 +7,7 @@ from aiogram.types import Message
 from sqlalchemy import select
 
 from classmate.bot.handlers import _user, _ensure_group_member
+from classmate.bot.keyboards import main_menu
 from classmate.db.models import ClassGroup
 from classmate.db.session import SessionFactory
 from classmate.services.permissions import hash_code
