@@ -1,5 +1,4 @@
 from datetime import datetime, timedelta, timezone
-import secrets
 
 from sqlalchemy import select
 from sqlalchemy.ext.asyncio import AsyncSession
@@ -16,11 +15,7 @@ from classmate.db.models import (
 from classmate.domain.enums import Role
 from classmate.domain.errors import NotFound, ValidationError
 from classmate.domain.text import normalize_name
-from classmate.services.permissions import hash_code
-
-
-def make_invite_code() -> str:
-    return secrets.token_urlsafe(8).replace("-", "").replace("_", "").upper()[:10]
+from classmate.domain.codes import generate_code, hash_code
 
 
 async def issue_member_invite(
@@ -32,7 +27,7 @@ async def issue_member_invite(
     )
     if class_group is None:
         raise NotFound("کلاس پیدا نشد.")
-    code = make_invite_code()
+    code = generate_code()
     class_group.member_join_code_hash = hash_code(code)
     class_group.member_join_code_expires_at = datetime.now(timezone.utc) + timedelta(days=7)
     await session.flush()
