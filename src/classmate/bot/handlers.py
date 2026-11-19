@@ -30,6 +30,7 @@ from classmate.db.models import (
     School,
     SchoolMembership,
     NotificationPreference,
+    ReminderJob,
     Subject,
     TimetableEntry,
     User,
@@ -1309,6 +1310,69 @@ async def pending_command(message: Message):
             f"🕓 <b>{escape(ENTITY_LABELS.get(kind, 'اطلاعات'))}</b> #{record.id}\n{escape(title)}\n{escape(body[:1200])}",
             reply_markup=approval_keyboard(kind, record.id),
         )
+
+
+@router.message(Command("reminder_uncertain"))
+async def reminder_uncertain_command(message: Message):
+    """List reminder sends whose delivery outcome could not be determined."""
+    async with SessionFactory() as session:
+        async with session.begin():
+            actor = await _user(session, message.from_user, private=message.chat.type == "private")
+            if not actor.is_platform_admin:
+                await message.answer("این فرمان فقط برای مدیر کل در دسترس است.")
+                return
+            rows = (
+                await session.execute(
+                    select(ReminderJob)
+                    .where(ReminderJob.status == "uncertain")
+                    .order_by(ReminderJob.id.desc())
+                    .limit(20)
+                )
+            ).scalars().all()
+    if not rows:
+        await message.answer("یادآوری نامطمئنی برای بررسی وجود ندارد.")
+        return
+    lines = ["⚠️ <b>یادآوری‌های با نتیجه ارسال نامشخص</b>"]
+    for job in rows:
+        lines.append(
+            f"\n• شناسه <code>{job.id}</code> | مقصد {job.target_type} | تلاش {job.attempts}\n"
+            f"  {escape(job.last_error or 'علت ثبت نشده')[:240]}"
+        )
+    lines.append(
+        "\nبرای علامت‌گذاری به‌عنوان ارسال‌شده: <code>/reminder_resolve شناسه sent</code>\n"
+        "برای ارسال مجدد: <code>/reminder_resolve شناسه retry</code>؛ ارسال مجدد ممکن است پیام تکراری بسازد."
+    )
+    await message.answer("\n".join(lines))
+
+
+@router.message(Command("reminder_resolve"))
+async def reminder_resolve_command(message: Message):
+    parts = (message.text or "").split()
+    if len(parts) != 3 or not parts[1].isdigit() or parts[2] not in {"sent", "retry"}:
+        await message.answer("قالب: /reminder_resolve شناسه sent|retry")
+        return
+    async with SessionFactory() as session:
+        async with session.begin():
+            actor = await _user(session, message.from_user, private=message.chat.type == "private")
+            if not actor.is_platform_admin:
+                await message.answer("این فرمان فقط برای مدیر کل در دسترس است.")
+                return
+            job = await session.get(ReminderJob, int(parts[1]), with_for_update=True)
+            if job is None or job.status != "uncertain":
+                await message.answer("یادآوری نامطمئن با این شناسه پیدا نشد.")
+                return
+            if parts[2] == "sent":
+                job.status = "sent"
+                job.sent_at = datetime.now(timezone.utc)
+                job.last_error = "Manually reconciled by platform administrator as already delivered."
+                response = "یادآوری به‌عنوان ارسال‌شده ثبت شد و دیگر ارسال نمی‌شود."
+            else:
+                job.status = "retry"
+                job.scheduled_at = datetime.now(timezone.utc)
+                job.locked_at = None
+                job.last_error = "Manually re-queued by platform administrator; duplicate delivery is possible."
+                response = "یادآوری برای ارسال مجدد در صف قرار گرفت؛ احتمال پیام تکراری وجود دارد."
+    await message.answer(response)
 
 
 @router.message(Command("homework"))
