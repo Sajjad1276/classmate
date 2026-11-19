@@ -170,3 +170,33 @@ async def set_timetable_slot(
         slot.valid_until = valid_until
     await session.flush()
     return slot
+
+
+
+async def assign_class_manager(
+    session: AsyncSession, actor: User, class_id: int, target: User
+) -> ClassMembership:
+    _, year, school = await require_class_role(
+        session, actor, class_id, {Role.CLASS_MANAGER}
+    )
+    membership = await session.scalar(
+        select(ClassMembership).where(
+            ClassMembership.class_id == class_id,
+            ClassMembership.user_id == target.id,
+        )
+    )
+    if membership is None:
+        membership = ClassMembership(
+            class_id=class_id,
+            user_id=target.id,
+            role=Role.CLASS_MANAGER.value,
+            is_active=True,
+        )
+        session.add(membership)
+    else:
+        if membership.role == Role.CLASS_MANAGER.value and membership.is_active:
+            return membership
+        membership.role = Role.CLASS_MANAGER.value
+        membership.is_active = True
+    await session.flush()
+    return membership
