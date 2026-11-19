@@ -5,6 +5,7 @@ from aiogram.types import User as TelegramUser
 from sqlalchemy import select
 from sqlalchemy.ext.asyncio import AsyncSession
 
+from classmate.domain.enums import Role
 from classmate.db.models import (
     AcademicYear,
     ClassGroup,
@@ -82,7 +83,7 @@ async def is_school_admin(
             select(SchoolMembership.id).where(
                 SchoolMembership.user_id == user.id,
                 SchoolMembership.school_id == school_id,
-                SchoolMembership.role == "school_admin",
+                SchoolMembership.role == Role.SCHOOL_ADMIN,
                 SchoolMembership.is_active.is_(True),
             )
         )
@@ -95,7 +96,7 @@ async def can_approve(
     if user.is_platform_admin:
         return True
     membership = await class_membership(session, user.id, class_id)
-    if membership and membership.role in {"class_manager", "trusted_approver"}:
+    if membership and membership.role in {Role.CLASS_MANAGER, Role.TRUSTED_APPROVER}:
         return True
     school_id = await session.scalar(
         select(AcademicYear.school_id)
