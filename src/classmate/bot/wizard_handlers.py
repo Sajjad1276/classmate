@@ -2,7 +2,7 @@ from datetime import date, datetime
 from zoneinfo import ZoneInfo
 
 from aiogram import Bot, F, Router
-from aiogram.filters import Command
+from aiogram.filters import Command, StateFilter
 from aiogram.fsm.context import FSMContext
 from aiogram.types import CallbackQuery, Message
 from sqlalchemy import select
@@ -90,7 +90,7 @@ async def _start_wizard(
     if chat_id == from_user.id:
         await bot.send_message(
             chat_id,
-            "فرایند ثبت آغاز شد. برای خروج، دکمه «❌ لغو عملیات» را بزن.",
+            "فرایند ثبت آغاز شد. برای بازگشت، دکمه «⬅️ بازگشت» را بزن.",
             reply_markup=wizard_cancel_keyboard(),
         )
     if len(classes) == 1:
@@ -285,6 +285,22 @@ async def _submit_pending(
     )
     await _pending_message(
         bot, class_snapshot, entity_type, record_id, title, details, creator_name
+    )
+
+
+@router.message(StateFilter(RecordWizard), F.text == "⬅️ بازگشت")
+async def wizard_back_button(message: Message, state: FSMContext):
+    """Cancel any active record wizard before field handlers consume the back label."""
+    await state.clear()
+    keyboard = None
+    if message.chat.type == "private":
+        async with SessionFactory() as session:
+            async with session.begin():
+                user = await _user(session, message.from_user, private=True)
+                keyboard = await _main_keyboard_for_user(session, user)
+    await message.answer(
+        "فرایند ثبت لغو شد؛ اطلاعات نیمه‌کاره ذخیره نشد.",
+        reply_markup=keyboard,
     )
 
 
