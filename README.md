@@ -52,8 +52,9 @@ Opening an inner panel hides the persistent Reply Keyboard. One Back button clos
 
 - A school can be linked to one central group through Telegram's one-time startgroup link.
 - A class can be linked to its own group with /connect <code>; the code is one-time and expires after 30 minutes. The command checks that its issuer is a Telegram group administrator and that the bot itself is an administrator in the target group. A Telegram chat cannot be bound as both a school group and a class group.
-- Linked groups support command-based class workflows, including approved homework/exam/report queries, weekly timetable, next-lesson search, submissions and review/cancellation by authorized roles.
-- A dedicated inline group dashboard and broadcast/announcement tools are not yet implemented.
+- Linked class groups show an inline dashboard for approved homework, exams, the currently valid weekly timetable and today's summary; students can start homework/exam/report submissions from the same menu.
+- The review-queue button is shown to approvers and each review callback checks class permission on the server. The /connect command remains the one-time class-group binding flow.
+- Broadcast/announcement tooling and automatic ingestion of arbitrary messages are not implemented.
 
 Keep Telegram Privacy Mode enabled. ClassMate does not ingest arbitrary group conversations; it handles addressed commands and supported bot interactions only.
 
