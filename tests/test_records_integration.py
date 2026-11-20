@@ -23,8 +23,10 @@ from classmate.services.records import (
     cancel_approved_record,
     create_homework,
     create_daily_report,
+    create_exam,
     get_subject,
     list_reports,
+    list_cancelable_records,
     reject_record,
     soft_delete_subject,
     restore_subject,
@@ -310,3 +312,33 @@ async def test_group_chat_cannot_be_bound_as_both_class_and_school_group(db_sess
     assert not await is_chat_bound_to_class_group(db_session, -1001234567890)
     assert await is_chat_bound_to_class_group(db_session, -1001234567891)
     assert not await is_chat_bound_to_school_group(db_session, -1001234567891)
+
+
+@pytest.mark.asyncio
+async def test_cancelable_records_lists_all_approved_types_and_hides_pending(db_session):
+    school, class_group, creator, approver, subject = await _seed_class(db_session)
+    homework = await create_homework(
+        db_session, class_group.id, subject, "Algebra", "Exercises", date.today() + timedelta(days=2), creator.id
+    )
+    exam = await create_exam(
+        db_session, class_group.id, subject, "Physics", "Units 1-3", "test",
+        datetime.now(timezone.utc) + timedelta(days=4), creator.id,
+    )
+    report = await create_daily_report(
+        db_session, class_group.id, date.today(), "Report body", creator.id, "Daily report"
+    )
+    pending = await create_homework(
+        db_session, class_group.id, subject, "Pending item", "Not yet approved", None, creator.id
+    )
+    homework.status = RecordStatus.APPROVED
+    exam.status = RecordStatus.APPROVED
+    report.status = RecordStatus.APPROVED
+
+    rows = await list_cancelable_records(db_session, class_group.id)
+    ids_by_type = {kind: record.id for kind, record in rows}
+    assert ids_by_type == {
+        "homework": homework.id,
+        "exam": exam.id,
+        "report": report.id,
+    }
+    assert pending.id not in {record.id for _, record in rows}
