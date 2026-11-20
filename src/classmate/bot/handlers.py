@@ -29,7 +29,6 @@ from classmate.db.models import (
     ClassMembership,
     School,
     SchoolMembership,
-    NotificationPreference,
     Subject,
     TimetableEntry,
     User,
