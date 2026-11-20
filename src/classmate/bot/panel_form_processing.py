@@ -4,11 +4,13 @@ from datetime import datetime, time, timedelta
 from html import escape
 
 from aiogram import Bot
+from aiogram.exceptions import TelegramBadRequest
 from aiogram.fsm.context import FSMContext
 from aiogram.types import InlineKeyboardButton, Message
 from sqlalchemy import select
 
 from classmate.bot.context import WEEKDAYS, _ensure_group_member, _parse_pipe_args, _user
+from classmate.bot.keyboards import main_reply_keyboard
 from classmate.bot.states import PanelInput
 from classmate.bot.formatters import _format_exams, _format_homework
 from classmate.core.config import get_settings
@@ -47,6 +49,13 @@ def _parse_persian_int(value: str) -> int:
     translated = value.translate(str.maketrans("۰۱۲۳۴۵۶۷۸۹", "0123456789"))
     return int(translated)
 
+async def _send_join_retry_message(bot: Bot, chat_id: int, error: Exception) -> None:
+    """Send join-code errors as a new message without replacing the original prompt."""
+    await bot.send_message(
+        chat_id,
+        f"⚠️ {escape(str(error))}\n\nکد را دوباره بررسی و وارد کن.",
+    )
+
 
 async def handle_panel_input(
     message: Message, state: FSMContext, bot: Bot, *, render_from_message, markup
@@ -81,6 +90,7 @@ async def handle_panel_input(
 
     school_group_token = None
     school_group_url = None
+    join_reply_keyboard = None
     try:
         if form_name == "school_new":
             school_name = data.get("school_name", "").strip()
@@ -106,6 +116,36 @@ async def handle_panel_input(
                     if class_group is None:
                         raise ValueError("کد دعوت معتبر نیست یا اعتبار آن تمام شده است.")
                     await _ensure_group_member(session, actor, class_group.id)
+                    has_school_admin_role = actor.is_platform_admin or (
+                        await session.scalar(
+                            select(SchoolMembership.id).where(
+                                SchoolMembership.user_id == actor.id,
+                                SchoolMembership.role == Role.SCHOOL_ADMIN,
+                                SchoolMembership.is_active.is_(True),
+                            )
+                        )
+                    ) is not None
+                    member_roles = set(
+                        (
+                            await session.scalars(
+                                select(ClassMembership.role).where(
+                                    ClassMembership.user_id == actor.id,
+                                    ClassMembership.is_active.is_(True),
+                                )
+                            )
+                        ).all()
+                    )
+                    is_class_manager = Role.CLASS_MANAGER in member_roles
+                    join_reply_keyboard = main_reply_keyboard(
+                        is_platform_admin=actor.is_platform_admin,
+                        is_school_admin=bool(has_school_admin_role),
+                        is_class_manager=is_class_manager,
+                        is_approver=(
+                            bool(has_school_admin_role)
+                            or is_class_manager
+                            or Role.TRUSTED_APPROVER in member_roles
+                        ),
+                    )
                     result_text = f"✅ به کلاس «{escape(class_group.name)}» متصل شدی."
                 elif form_name == "school_new":
                     if not actor.is_platform_admin:
@@ -365,8 +405,20 @@ async def handle_panel_input(
                     raise ValueError("این فرم شناخته نشده است.")
         await state.update_data(panel_form=None, panel_school_id=None, school_name=None)
         if form_name == "join":
-            back = "ui:classes"
-        elif class_id:
+            panel_message_id = data.get("panel_message_id")
+            if panel_message_id is not None:
+                try:
+                    await bot.delete_message(message.chat.id, panel_message_id)
+                except TelegramBadRequest:
+                    pass
+            await state.clear()
+            await bot.send_message(
+                message.chat.id,
+                result_text,
+                reply_markup=join_reply_keyboard or main_reply_keyboard(),
+            )
+            return
+        if class_id:
             back = f"ui:manage:{class_id}"
         elif school_id:
             back = f"ui:school_manage:{school_id}"
@@ -387,6 +439,9 @@ async def handle_panel_input(
         )
     except (ValueError, PermissionError, TypeError, KeyError) as exc:
         await state.set_state(PanelInput.input)
+        if form_name == "join":
+            await _send_join_retry_message(bot, message.chat.id, exc)
+            return
         await render_from_message(
             message,
             state,
