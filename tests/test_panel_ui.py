@@ -106,6 +106,7 @@ async def test_join_button_replaces_the_existing_panel_and_shows_reply_keyboard_
     await main_button_handler(message, state, bot)
 
     bot.delete_message.assert_awaited_once_with(123, 99)
+    message.delete.assert_not_awaited()
     sent_args = bot.send_message.await_args
     assert sent_args.args[:2] == (
         123,
