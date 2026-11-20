@@ -138,8 +138,11 @@ async def update_user_reminder_preference(
     enabled: bool,
 ) -> tuple[int, int]:
     """Update a category preference and reconcile only this user's private queue."""
-    if category not in {EntityType.HOMEWORK, EntityType.EXAM}:
+    if category not in {"homework", "exams"}:
         raise ValueError("Unsupported reminder category")
+    entity_type = (
+        EntityType.HOMEWORK if category == "homework" else EntityType.EXAM
+    )
 
     # Serialize first-time preference creation and concurrent toggles for this account.
     locked_user = await session.scalar(
@@ -161,7 +164,7 @@ async def update_user_reminder_preference(
             class_id=class_group.id,
         )
         session.add(preference)
-    if category == EntityType.HOMEWORK:
+    if entity_type == EntityType.HOMEWORK:
         preference.homework_enabled = enabled
     else:
         preference.exams_enabled = enabled
@@ -175,7 +178,7 @@ async def update_user_reminder_preference(
                     ReminderJob.class_id == class_group.id,
                     ReminderJob.target_type == "private",
                     ReminderJob.target_id == locked_user.telegram_id,
-                    ReminderJob.entity_type == category,
+                    ReminderJob.entity_type == entity_type,
                     ReminderJob.status.in_(
                         [ReminderStatus.PENDING, ReminderStatus.RETRY, ReminderStatus.PROCESSING]
                     ),
@@ -190,7 +193,7 @@ async def update_user_reminder_preference(
             cancelled += 1
         return 0, cancelled
 
-    if category == EntityType.HOMEWORK:
+    if entity_type == EntityType.HOMEWORK:
         local_today = datetime.now(ZoneInfo(school_timezone)).date()
         upcoming = (
             await session.scalars(
@@ -219,7 +222,7 @@ async def update_user_reminder_preference(
             session,
             class_group,
             record,
-            category,
+            entity_type,
             school_timezone,
             target_user_id=locked_user.id,
             include_group=False,
