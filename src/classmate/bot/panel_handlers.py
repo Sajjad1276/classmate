@@ -1,7 +1,7 @@
 from __future__ import annotations
 
 import logging
-from datetime import datetime
+from datetime import datetime, timedelta, timezone
 from html import escape
 from zoneinfo import ZoneInfo
 
@@ -28,8 +28,11 @@ from classmate.bot.keyboards import main_reply_keyboard
 from classmate.bot.states import PanelInput
 from classmate.domain.enums import ENTITY_LABELS, EntityType, Role
 from classmate.db.models import (
+    AcademicYear,
+    ClassGroup,
     ClassMembership,
     NotificationPreference,
+    School,
     SchoolMembership,
     Subject,
     TimetableEntry,
@@ -45,6 +48,10 @@ from classmate.services.permissions import (
     user_can_access_class,
 )
 from classmate.services.notifications import update_user_reminder_preference
+from classmate.services.group_bindings import (
+    is_chat_bound_to_class_group,
+    lock_group_binding_mutations,
+)
 from classmate.services.records import (
     approve_record,
     list_exams,
@@ -628,22 +635,88 @@ async def _show_platform_panel(
     )
 
 
+async def _admin_schools(tg_user) -> list[tuple[int, str]]:
+    """List only active schools the current account is authorized to administer."""
+    async with SessionFactory() as session:
+        async with session.begin():
+            user = await _user(session, tg_user, private=True)
+            query = select(School).where(School.is_active.is_(True))
+            if not user.is_platform_admin:
+                query = query.join(
+                    SchoolMembership,
+                    SchoolMembership.school_id == School.id,
+                ).where(
+                    SchoolMembership.user_id == user.id,
+                    SchoolMembership.role == Role.SCHOOL_ADMIN,
+                    SchoolMembership.is_active.is_(True),
+                )
+            schools = (await session.scalars(query.order_by(School.name))).all()
+            return [(school.id, school.name) for school in schools]
+
+
 async def _show_school_panel(callback: CallbackQuery, state: FSMContext) -> None:
     _, roles = await _current_user(callback)
     if not roles["school"]:
         await callback.answer("این بخش فقط برای مدیر مدرسه است.", show_alert=True)
         return
+    schools = await _admin_schools(callback.from_user)
     rows = [
+        [_button(f"🏫 {name[:42]}", f"ui:school_manage:{school_id}")]
+        for school_id, name in schools
+    ]
+    body = (
+        "🏢 <b>مدیریت مدرسه</b>\nمدرسه‌ای را برای مدیریت انتخاب کن."
+        if schools
+        else "برای این حساب مدرسه فعالی جهت مدیریت ثبت نشده است."
+    )
+    await _render_from_callback(callback, state, body, _markup(rows, "ui:close"))
+
+
+async def _show_school_management(
+    callback: CallbackQuery,
+    state: FSMContext,
+    school_id: int,
+) -> None:
+    async with SessionFactory() as session:
+        async with session.begin():
+            actor = await _user(session, callback.from_user, private=True)
+            school = await session.get(School, school_id)
+            if (
+                not school
+                or not school.is_active
+                or not await is_school_admin(session, actor, school_id)
+            ):
+                await callback.answer("به مدیریت این مدرسه دسترسی نداری.", show_alert=True)
+                return
+            school_name = school.name
+            group_id = school.telegram_group_id
+            group_title = school.telegram_group_title
+            link_expires_at = school.group_link_token_expires_at
+    link_is_pending = (
+        link_expires_at is not None
+        and link_expires_at > datetime.now(timezone.utc)
+    )
+    if group_id is not None:
+        group_status = f"🟢 گروه مرکزی متصل: {escape(group_title or str(group_id))}"
+        group_action = _button("🔄 تغییر گروه مرکزی", f"ui:school_group_reset_confirm:{school_id}")
+    elif link_is_pending:
+        group_status = "🕓 لینک اتصال صادر شده و تا ۲۴ ساعت معتبر است."
+        group_action = _button("📨 ارسال لینک تازه", f"ui:school_group_link:{school_id}")
+    else:
+        group_status = "🔴 گروه مرکزی هنوز متصل نشده است."
+        group_action = _button("🔗 ساخت لینک اتصال گروه", f"ui:school_group_link:{school_id}")
+    rows = [
+        [group_action],
         [_button("📅 ایجاد سال تحصیلی", "ui:form:year_new")],
         [_button("🏫 ایجاد کلاس", "ui:form:class_new")],
         [_button("👤 تعیین مدیر کلاس", "ui:form:class_manager_add")],
-        [_button("📚 مشاهده کلاس‌های مدرسه", "ui:classes")],
+        [_button("📚 مشاهده کلاس‌های قابل‌دسترسی", "ui:classes")],
     ]
     await _render_from_callback(
         callback,
         state,
-        "🏢 <b>پنل مدیریت مدرسه</b>\nعملیات مربوط به سال تحصیلی، کلاس‌ها و مدیران کلاس.",
-        _markup(rows),
+        f"🏢 <b>{escape(school_name)}</b>\n{group_status}\nعملیات مدیریتی مدرسه را انتخاب کن.",
+        _markup(rows, "ui:school"),
     )
 
 
@@ -1077,6 +1150,159 @@ async def platform_panel(callback: CallbackQuery, state: FSMContext):
 @router.callback_query(F.data == "ui:school")
 async def school_panel(callback: CallbackQuery, state: FSMContext):
     await _show_school_panel(callback, state)
+
+
+@router.callback_query(F.data.startswith("ui:school_manage:"))
+async def school_management_panel(callback: CallbackQuery, state: FSMContext):
+    try:
+        school_id = int(callback.data.rsplit(":", 1)[1])
+        if school_id < 1:
+            raise ValueError
+    except (TypeError, ValueError):
+        await callback.answer("شناسه مدرسه نامعتبر است.", show_alert=True)
+        return
+    await _show_school_management(callback, state, school_id)
+
+
+async def _issue_school_group_link(
+    callback: CallbackQuery,
+    state: FSMContext,
+    school_id: int,
+    *,
+    replace_existing: bool = False,
+) -> None:
+    if callback.message.chat.type != "private":
+        await callback.answer("ساخت لینک اتصال فقط از پنل خصوصی انجام می‌شود.", show_alert=True)
+        return
+    try:
+        bot_profile = await callback.bot.get_me()
+    except Exception:
+        await callback.answer("دریافت نام کاربری ربات ممکن نشد؛ دوباره تلاش کن.", show_alert=True)
+        return
+    if not bot_profile.username:
+        await callback.answer("برای ربات نام کاربری تنظیم نشده است.", show_alert=True)
+        return
+
+    token = f"CM_{make_code()}"
+    old_group_id = None
+    async with SessionFactory() as session:
+        async with session.begin():
+            actor = await _user(session, callback.from_user, private=True)
+            await lock_group_binding_mutations(session)
+            school = await session.scalar(
+                select(School).where(School.id == school_id).with_for_update()
+            )
+            if (
+                not school
+                or not school.is_active
+                or not await is_school_admin(session, actor, school_id)
+            ):
+                await callback.answer("به مدیریت این مدرسه دسترسی نداری.", show_alert=True)
+                return
+            if school.telegram_group_id is not None and not replace_existing:
+                await callback.answer(
+                    "این مدرسه از قبل گروه مرکزی دارد؛ برای تغییر، تأیید جداگانه لازم است.",
+                    show_alert=True,
+                )
+                return
+            if replace_existing:
+                if school.telegram_group_id is None:
+                    await callback.answer("گروه مرکزی فعالی برای جایگزینی وجود ندارد.", show_alert=True)
+                    return
+                old_group_id = school.telegram_group_id
+                school.telegram_group_id = None
+                school.telegram_group_title = None
+            school.group_link_token_hash = hash_code(token)
+            school.group_link_token_expires_at = datetime.now(timezone.utc) + timedelta(hours=24)
+            school_name = school.name
+
+    if old_group_id is not None:
+        try:
+            await callback.bot.send_message(
+                old_group_id,
+                f"ℹ️ اتصال گروه مرکزی مدرسه «{escape(school_name)}» تغییر کرده است. "
+                "این گروه دیگر مقصد اطلاع‌رسانی مدرسه نیست.",
+            )
+        except Exception:
+            logger.info(
+                "Could not notify old school group %s about rebinding",
+                old_group_id,
+                exc_info=True,
+            )
+
+    link = f"https://t.me/{bot_profile.username}?startgroup={token}"
+    keyboard = InlineKeyboardMarkup(
+        inline_keyboard=[
+            [InlineKeyboardButton(text="➕ افزودن ربات به گروه مدرسه", url=link)]
+        ]
+    )
+    await callback.bot.send_message(
+        callback.from_user.id,
+        f"🔗 <b>لینک اتصال گروه مرکزی مدرسه {escape(school_name)}</b>\n"
+        "این لینک یک‌بارمصرف است و تا ۲۴ ساعت اعتبار دارد. "
+        "لینک را از داخل گروه مقصد اجرا کن و ربات را مدیر گروه قرار بده.",
+        reply_markup=keyboard,
+    )
+    await _show_school_management(callback, state, school_id)
+
+
+@router.callback_query(F.data.startswith("ui:school_group_link:"))
+async def school_group_link(callback: CallbackQuery, state: FSMContext):
+    try:
+        school_id = int(callback.data.rsplit(":", 1)[1])
+        if school_id < 1:
+            raise ValueError
+    except (TypeError, ValueError):
+        await callback.answer("شناسه مدرسه نامعتبر است.", show_alert=True)
+        return
+    await _issue_school_group_link(callback, state, school_id)
+
+
+@router.callback_query(F.data.startswith("ui:school_group_reset_confirm:"))
+async def school_group_reset_confirm(callback: CallbackQuery, state: FSMContext):
+    try:
+        school_id = int(callback.data.rsplit(":", 1)[1])
+        if school_id < 1:
+            raise ValueError
+    except (TypeError, ValueError):
+        await callback.answer("شناسه مدرسه نامعتبر است.", show_alert=True)
+        return
+    async with SessionFactory() as session:
+        async with session.begin():
+            actor = await _user(session, callback.from_user, private=True)
+            school = await session.get(School, school_id)
+            if (
+                not school
+                or not school.is_active
+                or school.telegram_group_id is None
+                or not await is_school_admin(session, actor, school_id)
+            ):
+                await callback.answer("گروه مرکزی یا مجوز مدیریت مدرسه معتبر نیست.", show_alert=True)
+                return
+            group_title = school.telegram_group_title or str(school.telegram_group_id)
+    rows = [[
+        _button("بله، تغییر گروه", f"ui:school_group_reset_do:{school_id}"),
+        _button("خیر، برگشت", f"ui:school_manage:{school_id}"),
+    ]]
+    await _render_from_callback(
+        callback,
+        state,
+        f"⚠️ گروه مرکزی فعلی «{escape(group_title)}» از مدرسه جدا می‌شود.\n"
+        "پس از تأیید، لینک یک‌بارمصرف تازه برای اتصال گروه جایگزین صادر خواهد شد.",
+        _markup(rows, f"ui:school_manage:{school_id}"),
+    )
+
+
+@router.callback_query(F.data.startswith("ui:school_group_reset_do:"))
+async def school_group_reset_do(callback: CallbackQuery, state: FSMContext):
+    try:
+        school_id = int(callback.data.rsplit(":", 1)[1])
+        if school_id < 1:
+            raise ValueError
+    except (TypeError, ValueError):
+        await callback.answer("شناسه مدرسه نامعتبر است.", show_alert=True)
+        return
+    await _issue_school_group_link(callback, state, school_id, replace_existing=True)
 
 
 @router.callback_query(F.data.startswith("ui:form:"))
