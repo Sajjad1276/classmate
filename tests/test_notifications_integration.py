@@ -1,4 +1,5 @@
 from datetime import date, datetime, time, timedelta, timezone
+from zoneinfo import ZoneInfo
 
 import pytest
 
@@ -54,7 +55,7 @@ async def _make_target(session, *, has_preference: bool, enabled: bool):
 
 @pytest.mark.asyncio
 async def test_disabled_homework_preference_suppresses_private_reminder(db_session):
-    class_group, homework, user, school = await _make_target(db_session, has_preference=True, enabled=False)
+    class_group, homework, _, _ = await _make_target(db_session, has_preference=True, enabled=False)
     count = await schedule_approved_record_reminders(
         db_session, class_group, homework, "homework", "Asia/Tehran"
     )
@@ -63,7 +64,7 @@ async def test_disabled_homework_preference_suppresses_private_reminder(db_sessi
 
 @pytest.mark.asyncio
 async def test_missing_preference_uses_documented_enabled_default(db_session):
-    class_group, homework, user, school = await _make_target(db_session, has_preference=False, enabled=True)
+    class_group, homework, _, _ = await _make_target(db_session, has_preference=False, enabled=True)
     count = await schedule_approved_record_reminders(
         db_session, class_group, homework, "homework", "Asia/Tehran"
     )
