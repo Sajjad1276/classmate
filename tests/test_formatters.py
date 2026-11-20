@@ -1,12 +1,16 @@
 from types import SimpleNamespace
 
-from classmate.bot.formatters import _format_homework
+from classmate.bot.formatters import _format_exams, _format_homework
 
 
-def test_homework_formatter_explicitly_reports_results_beyond_display_cap():
+def test_homework_formatter_caps_items_and_reports_omitted_count():
     rows = [
         (
-            SimpleNamespace(title=f"Homework {index}", description="Description", due_on=None),
+            SimpleNamespace(
+                title=f"Homework {index}",
+                description="Long description " * 30,
+                due_on=None,
+            ),
             SimpleNamespace(name="Mathematics"),
         )
         for index in range(1, 32)
@@ -14,12 +18,34 @@ def test_homework_formatter_explicitly_reports_results_beyond_display_cap():
 
     rendered = _format_homework(rows)
 
-    assert "بیش از ۳۰ تکلیف" in rendered
     assert "Homework 1" in rendered
-    assert "Homework 30" in rendered
-    assert "Homework 31" not in rendered
-    assert rendered.count("•") == 30
+    assert "Homework 8" in rendered
+    assert "Homework 9" not in rendered
+    assert "23 تکلیف دیگر نمایش داده نشد" in rendered
+    assert rendered.count("•") == 8
+    assert len(rendered.encode("utf-16-le")) // 2 < 3900
 
 
 def test_homework_formatter_has_clear_empty_state():
     assert _format_homework([]) == "هنوز تکلیف تأییدشده‌ای ثبت نشده است."
+
+
+def test_exam_formatter_caps_items_and_reports_omitted_count():
+    from datetime import datetime, timezone
+
+    rows = [
+        (
+            SimpleNamespace(
+                title=f"Exam {index}",
+                scope="Scope " * 60,
+                scheduled_at=datetime(2026, 12, 1, tzinfo=timezone.utc),
+            ),
+            SimpleNamespace(name="Physics"),
+        )
+        for index in range(1, 16)
+    ]
+    rendered = _format_exams(rows, "Asia/Tehran")
+    assert "Exam 8" in rendered
+    assert "Exam 9" not in rendered
+    assert "7 امتحان دیگر نمایش داده نشد" in rendered
+    assert len(rendered.encode("utf-16-le")) // 2 < 3900
