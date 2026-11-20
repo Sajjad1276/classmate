@@ -959,7 +959,6 @@ async def cancelable_records_callback(callback: CallbackQuery, state: FSMContext
     except (AttributeError, TypeError, ValueError):
         await callback.answer("درخواست نامعتبر است.", show_alert=True)
         return
-    await callback.answer()
     await _show_cancelable_records_from_callback(callback, state, class_id)
 
 
@@ -1023,7 +1022,6 @@ async def cancel_record_execute_callback(callback: CallbackQuery, state: FSMCont
                 session, entity_type, entity_id, user.id, school.id, class_id
             )
             group_chat_id = class_group.group_chat_id
-    await callback.answer(response, show_alert=not success)
     if success and group_chat_id is not None:
         label = ENTITY_LABELS[EntityType(entity_type)]
         try:
