@@ -384,24 +384,34 @@ async def cancel_command(message: Message, state: FSMContext):
 async def wizard_homework_title(message: Message, state: FSMContext):
     title = (message.text or "").strip()
     if not title or len(title) > 180:
-        await message.answer("عنوان باید بین ۱ تا ۱۸۰ نویسه باشد.")
+        await message.answer(
+            "عنوان باید بین ۱ تا ۱۸۰ نویسه باشد.",
+            reply_markup=_wizard_input_markup(message.chat.id, message.from_user.id),
+        )
         return
     await state.update_data(title=title)
     await state.set_state(RecordWizard.homework_description)
-    await message.answer("شرح تکلیف را وارد کن:")
+    await message.answer(
+        "شرح تکلیف را وارد کن:",
+        reply_markup=_wizard_input_markup(message.chat.id, message.from_user.id),
+    )
 
 
 @router.message(RecordWizard.homework_description)
 async def wizard_homework_description(message: Message, state: FSMContext):
     description = (message.text or "").strip()
     if not description or len(description) > 4000:
-        await message.answer("شرح باید بین ۱ تا ۴۰۰۰ نویسه باشد.")
+        await message.answer(
+            "شرح باید بین ۱ تا ۴۰۰۰ نویسه باشد.",
+            reply_markup=_wizard_input_markup(message.chat.id, message.from_user.id),
+        )
         return
     await state.update_data(description=description)
     await state.set_state(RecordWizard.homework_due)
     await message.answer(
         "موعد تحویل را به شکل ۱۴۰۵/۰۸/۲۷ وارد کن؛ "
-        "برای جلسه بعد «جلسه بعد» و برای نامشخص «-» بنویس."
+        "برای جلسه بعد «جلسه بعد» و برای نامشخص «-» بنویس.",
+        reply_markup=_wizard_input_markup(message.chat.id, message.from_user.id),
     )
 
 
@@ -428,7 +438,8 @@ async def wizard_homework_due(message: Message, state: FSMContext, bot: Bot):
                 if lesson is None:
                     await message.answer(
                         "برای این درس جلسه آینده پیدا نشد. مدیر کلاس باید ابتدا "
-                        "برنامه هفتگی را با /timetable_set ثبت کند."
+                        "برنامه هفتگی را با /timetable_set ثبت کند.",
+                        reply_markup=_wizard_input_markup(message.chat.id, message.from_user.id),
                     )
                     return
                 due_session_id = lesson.id
@@ -438,7 +449,10 @@ async def wizard_homework_due(message: Message, state: FSMContext, bot: Bot):
         try:
             due_on = None if raw == "-" else parse_school_date(raw)
         except ValueError as exc:
-            await message.answer(str(exc))
+            await message.answer(
+                str(exc),
+                reply_markup=_wizard_input_markup(message.chat.id, message.from_user.id),
+            )
             return
         due_text = jalali_date(due_on) if due_on else "نامشخص"
 
@@ -475,18 +489,27 @@ async def wizard_exam_title(message: Message, state: FSMContext):
         return
     await state.update_data(title=title)
     await state.set_state(RecordWizard.exam_scope)
-    await message.answer("محدوده امتحان را وارد کن:")
+    await message.answer(
+        "محدوده امتحان را وارد کن:",
+        reply_markup=_wizard_input_markup(message.chat.id, message.from_user.id),
+    )
 
 
 @router.message(RecordWizard.exam_scope)
 async def wizard_exam_scope(message: Message, state: FSMContext):
     scope = (message.text or "").strip()
     if len(scope) > 4000:
-        await message.answer("محدوده بیش از حد طولانی است.")
+        await message.answer(
+            "محدوده بیش از حد طولانی است.",
+            reply_markup=_wizard_input_markup(message.chat.id, message.from_user.id),
+        )
         return
     await state.update_data(scope=scope)
     await state.set_state(RecordWizard.exam_datetime)
-    await message.answer("تاریخ و ساعت را وارد کن؛ نمونه: ۱۴۰۵/۰۸/۲۷ ۰۹:۰۰")
+    await message.answer(
+        "تاریخ و ساعت را وارد کن؛ نمونه: ۱۴۰۵/۰۸/۲۷ ۰۹:۰۰",
+        reply_markup=_wizard_input_markup(message.chat.id, message.from_user.id),
+    )
 
 
 @router.message(RecordWizard.exam_datetime)
@@ -528,14 +551,20 @@ async def wizard_report_date(message: Message, state: FSMContext):
             return
     await state.update_data(report_date=report_date.isoformat())
     await state.set_state(RecordWizard.report_body)
-    await message.answer("گزارش اتفاقات روز را بنویس. بهتر است هر زنگ و درس را جداگانه توضیح بدهی.")
+    await message.answer(
+        "گزارش اتفاقات روز را بنویس. بهتر است هر زنگ و درس را جداگانه توضیح بدهی.",
+        reply_markup=_wizard_input_markup(message.chat.id, message.from_user.id),
+    )
 
 
 @router.message(RecordWizard.report_body)
 async def wizard_report_body(message: Message, state: FSMContext, bot: Bot):
     body = (message.text or "").strip()
     if not body or len(body) > 8000:
-        await message.answer("گزارش باید بین ۱ تا ۸۰۰۰ نویسه باشد.")
+        await message.answer(
+            "گزارش باید بین ۱ تا ۸۰۰۰ نویسه باشد.",
+            reply_markup=_wizard_input_markup(message.chat.id, message.from_user.id),
+        )
         return
     data = await state.get_data()
     report_date = date.fromisoformat(data["report_date"])
