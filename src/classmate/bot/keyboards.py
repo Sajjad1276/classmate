@@ -41,22 +41,42 @@ def new_record_menu() -> InlineKeyboardMarkup:
     )
 
 
-def class_picker(classes: list[ClassGroup]) -> InlineKeyboardMarkup:
+def wizard_inline_cancel_keyboard(user_id: int) -> InlineKeyboardMarkup:
+    """Group-safe cancellation control, bound to the user who started the wizard."""
     return InlineKeyboardMarkup(
         inline_keyboard=[
-            [InlineKeyboardButton(text=item.name[:60], callback_data=f"wizard:class:{item.id}")]
-            for item in classes
+            [
+                InlineKeyboardButton(
+                    text="⬅️ لغو ثبت",
+                    callback_data=f"wizard:cancel:{user_id}",
+                )
+            ]
         ]
     )
 
 
-def subject_picker(subjects: list[Subject]) -> InlineKeyboardMarkup:
-    return InlineKeyboardMarkup(
-        inline_keyboard=[
-            [InlineKeyboardButton(text=item.name[:60], callback_data=f"wizard:subject:{item.id}")]
-            for item in subjects
-        ]
-    )
+def class_picker(
+    classes: list[ClassGroup], *, cancel_user_id: int | None = None
+) -> InlineKeyboardMarkup:
+    rows = [
+        [InlineKeyboardButton(text=item.name[:60], callback_data=f"wizard:class:{item.id}")]
+        for item in classes
+    ]
+    if cancel_user_id is not None:
+        rows.extend(wizard_inline_cancel_keyboard(cancel_user_id).inline_keyboard)
+    return InlineKeyboardMarkup(inline_keyboard=rows)
+
+
+def subject_picker(
+    subjects: list[Subject], *, cancel_user_id: int | None = None
+) -> InlineKeyboardMarkup:
+    rows = [
+        [InlineKeyboardButton(text=item.name[:60], callback_data=f"wizard:subject:{item.id}")]
+        for item in subjects
+    ]
+    if cancel_user_id is not None:
+        rows.extend(wizard_inline_cancel_keyboard(cancel_user_id).inline_keyboard)
+    return InlineKeyboardMarkup(inline_keyboard=rows)
 
 
 def approval_keyboard(entity_type: str, entity_id: int) -> InlineKeyboardMarkup:
