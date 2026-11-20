@@ -69,6 +69,10 @@ def _is_panel_input_text(text: str | None) -> bool:
 
 
 MAIN_BUTTONS = {
+    "🏫 کلاس‌ها",
+    "📚 امور درسی",
+    "🔔 یادآوری‌ها",
+    "⚙️ مدیریت",
     "🏫 کلاس‌های من",
     "🔑 عضویت در کلاس",
     "➕ ثبت اطلاعات",
@@ -237,6 +241,7 @@ async def _show_classes(
     state: FSMContext,
     tg_user,
     action: str = "open",
+    back: str = "ui:close",
 ) -> None:
     classes = await _get_classes(tg_user)
     if not classes:
@@ -244,7 +249,7 @@ async def _show_classes(
             callback,
             state,
             "🏫 هنوز کلاسی به حساب تو متصل نشده است. از مدیر کلاس کد دعوت بگیر و در بخش عضویت وارد کن.",
-            _markup([], "ui:close"),
+            _markup([], back),
         )
         return
     rows = [
@@ -266,6 +271,7 @@ async def _show_class_selector_from_message(
     bot: Bot,
     tg_user,
     action: str,
+    back: str = "ui:close",
 ) -> None:
     classes = await _get_classes(tg_user)
     if action in {"pending", "manage"}:
@@ -293,7 +299,7 @@ async def _show_class_selector_from_message(
             state,
             bot,
             notice,
-            _markup([]),
+            _markup([], back),
         )
         return
     if len(classes) == 1:
@@ -308,7 +314,7 @@ async def _show_class_selector_from_message(
         state,
         bot,
         "برای ادامه، کلاس موردنظر را انتخاب کن:",
-        _markup(rows),
+        _markup(rows, back),
     )
 
 
