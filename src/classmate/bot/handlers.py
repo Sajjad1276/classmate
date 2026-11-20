@@ -40,6 +40,7 @@ from classmate.domain.dates import (
     jalali_date,
     jalali_datetime,
 )
+from classmate.services.notifications import update_user_reminder_preference
 from classmate.services.permissions import (
     get_class_with_school,
     can_manage_class,
@@ -808,7 +809,7 @@ async def reminder_preferences(message: Message):
     if message.chat.type != "private":
         await message.answer("تنظیم یادآوری خصوصی را در گفت‌وگوی خصوصی ربات انجام بده.")
         return
-    parts = message.text.split()
+    parts = (message.text or "").split()
     if len(parts) < 2 or not parts[1].isdigit():
         await message.answer(
             "قالب: /reminders_on شناسه_کلاس [homework|exams|all]\n"
@@ -821,6 +822,7 @@ async def reminder_preferences(message: Message):
         await message.answer("نوع یادآوری باید homework، exams یا all باشد.")
         return
     enabled = parts[0].startswith("/reminders_on")
+    created_total = cancelled_total = 0
     async with SessionFactory() as session:
         async with session.begin():
             user = await _user(session, message.from_user, private=True)
@@ -828,18 +830,18 @@ async def reminder_preferences(message: Message):
             if not context:
                 await message.answer("به این کلاس دسترسی نداری.")
                 return
-            preference = await session.scalar(
-                select(NotificationPreference).where(
-                    NotificationPreference.user_id == user.id,
-                    NotificationPreference.class_id == class_id,
+            class_group, _, school = context
+            categories = ["homework", "exams"] if category == "all" else [category]
+            for selected_category in categories:
+                created, cancelled = await update_user_reminder_preference(
+                    session, user, class_group, school.timezone, selected_category, enabled
                 )
-            )
-            if preference is None:
-                preference = NotificationPreference(user_id=user.id, class_id=class_id)
-                session.add(preference)
-            if category in {"homework", "all"}:
-                preference.homework_enabled = enabled
-            if category in {"exams", "all"}:
-                preference.exams_enabled = enabled
+                created_total += created
+                cancelled_total += cancelled
     state_label = "فعال" if enabled else "غیرفعال"
-    await message.answer(f"✅ یادآوری‌های انتخاب‌شده برای این کلاس {state_label} شدند.")
+    detail = (
+        f" {created_total} یادآوری آینده در صف قرار گرفت یا بازیابی شد."
+        if enabled
+        else f" {cancelled_total} یادآوری خصوصی لغو شد."
+    )
+    await message.answer(f"✅ یادآوری‌های انتخاب‌شده برای این کلاس {state_label} شدند.{detail}")
