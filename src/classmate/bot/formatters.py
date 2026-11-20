@@ -51,7 +51,12 @@ def _format_homework(rows) -> str:
             f"\n• <b>{subject_name}</b> — {title}\n"
             f"  {escape(description)}\n  موعد: {due}"
         )
-    if omitted:
+    if len(rows) > 30:
+        lines.append(
+            "\nℹ️ بیش از ۳۰ تکلیف پیدا شد؛ ۸ مورد نخست نمایش داده شده و "
+            "دست‌کم ۲۳ تکلیف دیگر وجود دارد."
+        )
+    elif omitted:
         lines.append(f"\nℹ️ {omitted} تکلیف دیگر نمایش داده نشد.")
     return "\n".join(lines)
 
@@ -73,6 +78,11 @@ def _format_exams(rows, timezone_name: str) -> str:
             f"  محدوده: {escape(scope)}\n"
             f"  زمان: {jalali_datetime(exam.scheduled_at, timezone_name)}"
         )
-    if omitted:
+    if len(rows) > 30:
+        lines.append(
+            "\nℹ️ بیش از ۳۰ امتحان پیدا شد؛ ۸ مورد نخست نمایش داده شده و "
+            "دست‌کم ۲۳ امتحان دیگر وجود دارد."
+        )
+    elif omitted:
         lines.append(f"\nℹ️ {omitted} امتحان دیگر نمایش داده نشد.")
     return "\n".join(lines)
