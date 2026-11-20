@@ -98,3 +98,17 @@ def test_panel_router_registers_school_group_management_callbacks():
     assert "school_group_link" in callback_names
     assert "school_group_reset_confirm" in callback_names
     assert "school_group_reset_do" in callback_names
+
+
+def test_school_context_is_preserved_when_a_school_form_is_cancelled():
+    assert _parent_for_form("year_new", None, 42) == "ui:school_manage:42"
+    assert _parent_for_form("class_new", None, 9) == "ui:school_manage:9"
+
+
+def test_panel_router_registers_school_class_selectors():
+    callback_names = {
+        handler.callback.__name__
+        for handler in panel_router.observers["callback_query"].handlers
+    }
+    assert "school_class_manager_selector" in callback_names
+    assert "school_classes_view" in callback_names
