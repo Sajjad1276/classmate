@@ -61,11 +61,12 @@ Input forms use the single reply-keyboard back control. Returning from a form re
 6. Successful class joining returns directly to the home keyboard. Other completed management forms retain a route back to their parent panel.
 7. Destructive operations require a confirmation step. Permissions are checked again when each callback is executed.
 8. Group chats do not receive a private reply keyboard. Their class menu remains inline and authorization stays class-scoped.
+9. Group record wizards use an inline **⬅️ لغو ثبت** action bound to the initiating Telegram user. Other members cannot cancel someone else's in-progress form.
 
 ## 4. Current interaction vocabulary
 
 - Home section: persistent reply-keyboard button.
 - Menu / selector / detail: inline buttons with a parent back action.
-- Input state: one reply-keyboard ⬅️ بازگشت control in private chat.
+- Input state: one reply-keyboard ⬅️ بازگشت control in private chat, or an owner-bound inline cancel control in a group.
 - Validation error: a new message; the form prompt remains available.
 - Success: a result message or updated panel, with the next valid navigation path.
