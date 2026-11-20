@@ -11,7 +11,10 @@ from classmate.bot.keyboards import (
 from classmate.bot.group_handlers import router as group_router
 from classmate.bot.panel_form_processing import _send_join_retry_message
 from classmate.bot.panel_handlers import (
+    _academic_menu_markup,
+    _classes_menu_markup,
     _is_panel_input_text,
+    _management_menu_markup,
     _parent_for_form,
     main_button_handler,
     router as panel_router,
@@ -26,16 +29,54 @@ def _labels(markup) -> set[str]:
     }
 
 
-def test_regular_user_sees_only_student_navigation():
+def test_regular_user_sees_only_top_level_sections():
     labels = _labels(main_reply_keyboard())
 
-    assert "🏫 کلاس‌های من" in labels
-    assert "🔑 عضویت در کلاس" in labels
-    assert "➕ ثبت اطلاعات" in labels
+    assert {"🏫 کلاس‌ها", "📚 امور درسی", "➕ ثبت اطلاعات", "🔔 یادآوری‌ها"} <= labels
+    assert "ℹ️ راهنمای استفاده" in labels
     assert "🛡 پنل مدیر کل" not in labels
     assert "🏢 مدیریت مدرسه" not in labels
-    assert "⚙️ مدیریت کلاس" not in labels
+    assert "⚙️ مدیریت" not in labels
     assert "🕓 صف بررسی" not in labels
+    assert "🏫 کلاس‌های من" not in labels
+    assert "🔑 عضویت در کلاس" not in labels
+    assert "📚 تکالیف" not in labels
+
+
+def test_classes_menu_groups_my_classes_and_join_actions():
+    callback_data = {
+        button.callback_data
+        for row in _classes_menu_markup().inline_keyboard
+        for button in row
+    }
+    assert callback_data == {"ui:classes", "ui:form:join"}
+
+
+def test_academic_menu_groups_all_class_information_views():
+    callback_data = {
+        button.callback_data
+        for row in _academic_menu_markup().inline_keyboard
+        for button in row
+    }
+    assert callback_data == {
+        "ui:home_action:homework",
+        "ui:home_action:exams",
+        "ui:home_action:week",
+        "ui:home_action:today",
+        "ui:home_action:ask",
+        "ui:close",
+    }
+
+
+def test_management_menu_only_exposes_roles_the_user_has():
+    callback_data = {
+        button.callback_data
+        for row in _management_menu_markup(
+            {"manager": True, "school": False, "platform": False}
+        ).inline_keyboard
+        for button in row
+    }
+    assert callback_data == {"ui:manage_action:class", "ui:close"}
 
 
 def test_main_keyboard_has_no_temporary_back_or_cancel_button():
@@ -53,14 +94,15 @@ def test_platform_admin_sees_platform_and_school_management():
         )
     )
 
-    assert "🛡 پنل مدیر کل" in labels
-    assert "🏢 مدیریت مدرسه" in labels
+    assert "⚙️ مدیریت" in labels
+    assert "🛡 پنل مدیر کل" not in labels
+    assert "🏢 مدیریت مدرسه" not in labels
 
 
 def test_class_manager_sees_class_management_but_not_platform_admin():
     labels = _labels(main_reply_keyboard(is_class_manager=True, is_approver=True))
 
-    assert "⚙️ مدیریت کلاس" in labels
+    assert "⚙️ مدیریت" in labels
     assert "🕓 صف بررسی" in labels
     assert "🛡 پنل مدیر کل" not in labels
     assert "🏢 مدیریت مدرسه" not in labels
@@ -166,6 +208,11 @@ def test_panel_router_registers_school_class_selectors():
     }
     assert "school_class_manager_selector" in callback_names
     assert "school_classes_view" in callback_names
+    assert "classes_menu_callback" in callback_names
+    assert "academic_menu_callback" in callback_names
+    assert "management_menu_callback" in callback_names
+    assert "home_academic_action" in callback_names
+    assert "management_action" in callback_names
 
 
 def test_group_menu_exposes_records_but_review_is_role_gated():
