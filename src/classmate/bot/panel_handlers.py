@@ -885,7 +885,7 @@ async def _show_platform_panel(
     rows = [
         [_button("🏫 ایجاد مدرسه و سال تحصیلی", "ui:form:school_new")],
         [_button("👤 تعیین مدیر مدرسه", "ui:form:school_admin_add")],
-        [_button("📚 مدیریت مدرسه‌ها و کلاس‌ها", "ui:classes")],
+        [_button("🏢 مدیریت مدرسه‌ها و کلاس‌ها", "ui:school")],
     ]
     await _render_from_callback(
         callback,
