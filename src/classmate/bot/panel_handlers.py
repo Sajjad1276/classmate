@@ -649,6 +649,197 @@ async def _show_pending_from_message(
     )
 
 
+async def _show_class_panel_from_message(
+    message: Message,
+    state: FSMContext,
+    bot: Bot,
+    class_id: int,
+    tg_user,
+) -> None:
+    context = await _class_context(class_id, tg_user)
+    if not context:
+        await _render_from_message(message, state, bot, "به این کلاس دسترسی نداری.", _markup([]))
+        return
+    item, school, year = context["class"], context["school"], context["year"]
+    title = (
+        f"🏫 <b>{escape(item.name)}</b>\\n"
+        f"مدرسه: {escape(school.name)}\\n"
+        f"پایه: {escape(item.grade)} | سال تحصیلی: {escape(year.name)}"
+    )
+    rows = [
+        [_button("📚 تکالیف", f"ui:homework:{class_id}"),
+         _button("📝 امتحانات", f"ui:exams:{class_id}")],
+        [_button("📅 برنامه هفتگی", f"ui:week:{class_id}"),
+         _button("🗒 گزارش امروز", f"ui:today:{class_id}")],
+        [_button("🔎 جست‌وجو", f"ui:ask:{class_id}"),
+         _button("🔔 یادآوری", f"ui:reminders:{class_id}")],
+    ]
+    if context["is_approver"]:
+        rows.append([_button("🕓 صف بررسی", f"ui:pending:{class_id}")])
+        rows.append([_button("🚫 لغو اطلاعات تأییدشده", f"ui:cancel_list:{class_id}")])
+    if context["is_manager"] or context["is_school_admin"] or context["is_platform_admin"]:
+        rows.append([_button("⚙️ مدیریت این کلاس", f"ui:manage:{class_id}")])
+    await _render_from_message(message, state, bot, title, _markup(rows, "ui:classes"))
+
+
+async def _show_school_management_from_message(
+    message: Message,
+    state: FSMContext,
+    bot: Bot,
+    school_id: int,
+) -> None:
+    async with SessionFactory() as session:
+        async with session.begin():
+            actor = await _user(session, message.from_user, private=True)
+            school = await session.get(School, school_id)
+            if (
+                not school
+                or not school.is_active
+                or not await is_school_admin(session, actor, school_id)
+            ):
+                await _render_from_message(
+                    message, state, bot, "به مدیریت این مدرسه دسترسی نداری.", _markup([])
+                )
+                return
+            school_name = school.name
+            group_id = school.telegram_group_id
+            group_title = school.telegram_group_title
+            link_expires_at = school.group_link_token_expires_at
+    link_pending = link_expires_at is not None and link_expires_at > datetime.now(timezone.utc)
+    if group_id is not None:
+        group_status = f"🟢 گروه مرکزی متصل: {escape(group_title or str(group_id))}"
+        group_action = _button("🔄 تغییر گروه مرکزی", f"ui:school_group_reset_confirm:{school_id}")
+    elif link_pending:
+        group_status = "🕓 لینک اتصال صادر شده و تا ۲۴ ساعت معتبر است."
+        group_action = _button("📨 ارسال لینک تازه", f"ui:school_group_link:{school_id}")
+    else:
+        group_status = "🔴 گروه مرکزی هنوز متصل نشده است."
+        group_action = _button("🔗 ساخت لینک اتصال گروه", f"ui:school_group_link:{school_id}")
+    rows = [
+        [group_action],
+        [_button("📅 ایجاد سال تحصیلی", f"ui:form:year_new:{school_id}")],
+        [_button("🏫 ایجاد کلاس", f"ui:form:class_new:{school_id}")],
+        [_button("👤 تعیین مدیر کلاس", f"ui:school_classes:{school_id}")],
+        [_button("📚 مشاهده کلاس‌های این مدرسه", f"ui:school_classes_view:{school_id}")],
+    ]
+    await _render_from_message(
+        message, state, bot,
+        f"🏢 <b>{escape(school_name)}</b>\\n{group_status}\\nعملیات مدیریتی مدرسه را انتخاب کن.",
+        _markup(rows, "ui:school"),
+    )
+
+
+async def _show_platform_panel_from_message(
+    message: Message,
+    state: FSMContext,
+    bot: Bot,
+) -> None:
+    _, roles = await _current_user(message)
+    if not roles["platform"]:
+        await _render_from_message(message, state, bot, "این پنل فقط برای مدیر کل است.", _markup([]))
+        return
+    rows = [
+        [_button("🏫 ایجاد مدرسه و سال تحصیلی", "ui:form:school_new")],
+        [_button("👤 تعیین مدیر مدرسه", "ui:form:school_admin_add")],
+        [_button("📚 مدیریت مدرسه‌ها و کلاس‌ها", "ui:school")],
+    ]
+    await _render_from_message(
+        message, state, bot,
+        f"🛡 <b>پنل مدیر کل ClassMate</b>\\nشناسه تلگرام: <code>{message.from_user.id}</code>",
+        _markup(rows, "ui:management_menu"),
+    )
+
+
+async def _start_panel_input_from_message(
+    message: Message,
+    state: FSMContext,
+    bot: Bot,
+    *,
+    form_name: str,
+    prompt: str,
+    class_id: int | None = None,
+    school_id: int | None = None,
+    parent_kind: str | None = None,
+    parent_message_id: int | None = None,
+) -> None:
+    data = await state.get_data()
+    parent_id = parent_message_id or data.get("panel_message_id") or message.message_id
+    if parent_id:
+        try:
+            await bot.edit_message_reply_markup(
+                chat_id=message.chat.id,
+                message_id=parent_id,
+                reply_markup=None,
+            )
+        except TelegramBadRequest:
+            pass
+    await state.set_state(PanelInput.input)
+    prompt_message = await bot.send_message(
+        message.chat.id,
+        prompt,
+        reply_markup=wizard_cancel_keyboard(),
+    )
+    await state.update_data(
+        panel_form=form_name,
+        panel_class_id=class_id,
+        panel_school_id=school_id,
+        panel_message_id=prompt_message.message_id,
+        panel_parent_message_id=parent_id,
+        panel_parent_kind=parent_kind,
+    )
+
+
+async def _return_to_panel_parent(
+    message: Message,
+    state: FSMContext,
+    bot: Bot,
+    data: dict,
+) -> None:
+    prompt_id = data.get("panel_message_id")
+    parent_id = data.get("panel_parent_message_id")
+    parent_kind = data.get("panel_parent_kind")
+    class_id = data.get("panel_class_id")
+    school_id = data.get("panel_school_id")
+    try:
+        await message.delete()
+    except TelegramBadRequest:
+        pass
+    if prompt_id and prompt_id != parent_id:
+        try:
+            await bot.delete_message(message.chat.id, prompt_id)
+        except TelegramBadRequest:
+            pass
+    await state.clear()
+    if parent_id:
+        await state.update_data(panel_message_id=parent_id)
+    if parent_kind == "classes_menu":
+        await _show_classes_menu_from_message(message, state, bot)
+    elif parent_kind == "academic_menu":
+        await _show_academic_menu_from_message(message, state, bot)
+    elif parent_kind == "management_menu":
+        await _show_management_menu_from_message(message, state, bot)
+    elif parent_kind == "class_panel" and class_id:
+        await _show_class_panel_from_message(message, state, bot, class_id, message.from_user)
+    elif parent_kind == "class_manage" and class_id:
+        await _show_management_from_message(message, state, bot, class_id, message.from_user)
+    elif parent_kind == "school_manage" and school_id:
+        await _show_school_management_from_message(message, state, bot, school_id)
+    elif parent_kind == "platform":
+        await _show_platform_panel_from_message(message, state, bot)
+    else:
+        await state.clear()
+    _, roles = await _current_user(message)
+    await message.answer(
+        "به بخش قبلی برگشتی.",
+        reply_markup=main_reply_keyboard(
+            is_platform_admin=roles["platform"],
+            is_school_admin=roles["school"],
+            is_class_manager=roles["manager"],
+            is_approver=roles["approver"],
+        ),
+    )
+
+
 async def _show_management_from_message(
     message: Message,
     state: FSMContext,
