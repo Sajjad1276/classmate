@@ -768,7 +768,14 @@ async def _start_panel_input_from_message(
         try:
             await bot.delete_message(message.chat.id, parent_id)
         except TelegramBadRequest:
-            pass
+            try:
+                await bot.edit_message_reply_markup(
+                    chat_id=message.chat.id,
+                    message_id=parent_id,
+                    reply_markup=None,
+                )
+            except TelegramBadRequest:
+                pass
     await state.set_state(PanelInput.input)
     prompt_message = await bot.send_message(
         message.chat.id,
@@ -886,7 +893,7 @@ async def _show_platform_panel(
         "🛡 <b>پنل مدیر کل ClassMate</b>\n"
         f"حساب مدیر کل فعال است. شناسه تلگرام: <code>{callback.from_user.id}</code>\n"
         "از این بخش می‌توانی ساختار مدرسه‌ها و مدیران را مدیریت کنی.",
-        _markup(rows),
+        _markup(rows, "ui:management_menu"),
     )
 
 
