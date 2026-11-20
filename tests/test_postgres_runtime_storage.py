@@ -184,6 +184,7 @@ async def test_cancelled_processing_reminder_is_not_sent_or_reopened(monkeypatch
     monkeypatch.setattr(worker_main, "SessionFactory", factory)
     token = f"processing-cancel:{time.time_ns()}"
     school_id = None
+    homework_id = None
     try:
         async with factory() as session:
             async with session.begin():
@@ -233,6 +234,8 @@ async def test_cancelled_processing_reminder_is_not_sent_or_reopened(monkeypatch
         async with factory() as session:
             async with session.begin():
                 await session.execute(delete(ReminderJob).where(ReminderJob.dedupe_key == token))
+                if homework_id is not None:
+                    await session.execute(delete(Homework).where(Homework.id == homework_id))
                 if school_id is not None:
                     await session.execute(delete(School).where(School.id == school_id))
         await engine.dispose()
