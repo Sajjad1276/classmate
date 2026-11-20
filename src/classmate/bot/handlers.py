@@ -21,6 +21,7 @@ from classmate.bot.formatters import _format_exams, _format_homework
 from classmate.bot.keyboards import (
     main_menu,
     new_record_menu,
+    group_menu_keyboard,
 )
 from classmate.core.config import get_settings
 from classmate.db.models import (
@@ -43,6 +44,7 @@ from classmate.services.notifications import update_user_reminder_preference
 from classmate.services.permissions import (
     get_class_with_school,
     can_manage_class,
+    can_approve,
     hash_code,
     is_school_admin,
     make_code,
@@ -82,6 +84,42 @@ async def start(message: Message, state: FSMContext, bot: Bot):
                 if message.chat.type == "private"
                 else None
             )
+            group_context = (
+                await get_group_context(session, message.chat.id)
+                if message.chat.type in {"group", "supergroup"}
+                else None
+            )
+            group_can_review = bool(
+                group_context and await can_approve(session, user, group_context[0].id)
+            )
+            school_group_name = None
+            if message.chat.type in {"group", "supergroup"} and group_context is None:
+                school_group_name = await session.scalar(
+                    select(School.name).where(
+                        School.telegram_group_id == message.chat.id,
+                        School.is_active.is_(True),
+                    )
+                )
+    if group_context:
+        class_group, _, school = group_context
+        await message.answer(
+            f"🏫 <b>{escape(class_group.name)}</b> — {escape(school.name)}\nمنوی این کلاس:",
+            reply_markup=group_menu_keyboard(can_review=group_can_review),
+        )
+        return
+    if school_group_name:
+        await message.answer(
+            f"🏫 <b>گروه مرکزی مدرسه {escape(school_group_name)}</b>\n"
+            "این گروه برای اطلاع‌رسانی مدرسه متصل است. برای ثبت و مشاهده اطلاعات درسی، "
+            "از گروه اختصاصی هر کلاس استفاده کن."
+        )
+        return
+    if message.chat.type in {"group", "supergroup"}:
+        await message.answer(
+            "این گروه به کلاسی متصل نیست. مدیر کلاس می‌تواند از پنل خصوصی، "
+            "کد اتصال یک‌بارمصرف بسازد و با فرمان /connect آن را متصل کند."
+        )
+        return
     greeting = (
         f"• درود بیکران 🕊 {escape(message.from_user.full_name)}، به ربات ClassMate خوش آمدید.\n\n"
         "📇 - در اینجا می‌تونید امور مدرسه رو به صورت حرفه‌ای و پیشرفته مدیریت کنید.\n\n"
