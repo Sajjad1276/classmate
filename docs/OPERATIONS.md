@@ -74,3 +74,7 @@ The bot holds a PostgreSQL session-level advisory lock for the lifetime of long 
 ## Daily reports
 
 More than one daily report is allowed for the same class/date. Reports are individually reviewed and audited; do not assume one report row per day when writing exports or summaries.
+
+## Per-user reminder preferences
+
+The class reminder panel and the legacy /reminders_on and /reminders_off commands use the same service. Turning off homework or exam reminders cancels only that user's private jobs for the selected class/category (pending, retrying and processing); it does not cancel group announcements, another member's jobs or the other category. Turning the category back on re-scans future approved homework/exams and reactivates only jobs previously cancelled by that preference. Sent, failed and uncertain jobs are not reopened, and the queue's deduplication key prevents duplicate active jobs. A processing Telegram send that has already begun cannot be recalled; the worker checks the job/source state immediately before sending.
