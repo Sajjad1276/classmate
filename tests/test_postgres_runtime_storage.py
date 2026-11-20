@@ -239,3 +239,41 @@ async def test_cancelled_processing_reminder_is_not_sent_or_reopened(monkeypatch
                 if school_id is not None:
                     await session.execute(delete(School).where(School.id == school_id))
         await engine.dispose()
+
+
+@pytest.mark.asyncio
+async def test_group_binding_mutations_share_a_transaction_lock():
+    database_url = os.getenv("DATABASE_URL")
+    if not database_url:
+        pytest.skip("DATABASE_URL is required for group-binding lock integration tests")
+    from sqlalchemy import text
+
+    from classmate.services.group_bindings import (
+        GROUP_BINDING_LOCK_KEY,
+        lock_group_binding_mutations,
+    )
+
+    engine = create_async_engine(database_url)
+    factory = async_sessionmaker(engine, expire_on_commit=False)
+    second_connection = None
+    try:
+        async with factory() as first_session:
+            async with first_session.begin():
+                await lock_group_binding_mutations(first_session)
+                second_connection = await engine.connect()
+                async with second_connection.begin():
+                    acquired = await second_connection.scalar(
+                        text("SELECT pg_try_advisory_xact_lock(:lock_key)"),
+                        {"lock_key": GROUP_BINDING_LOCK_KEY},
+                    )
+                    assert acquired is False
+        async with second_connection.begin():
+            acquired_after_release = await second_connection.scalar(
+                text("SELECT pg_try_advisory_xact_lock(:lock_key)"),
+                {"lock_key": GROUP_BINDING_LOCK_KEY},
+            )
+            assert acquired_after_release is True
+    finally:
+        if second_connection is not None:
+            await second_connection.close()
+        await engine.dispose()
