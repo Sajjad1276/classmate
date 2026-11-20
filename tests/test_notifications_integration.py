@@ -147,3 +147,65 @@ async def test_turning_homework_back_on_reactivates_future_private_reminder(db_s
     assert job.last_error is None
     assert job.sent_at is None
     assert job.target_type == "private"
+
+
+@pytest.mark.asyncio
+async def test_reenable_does_not_reopen_sent_failed_or_uncertain_jobs(db_session):
+    class_group, homework, user, school = await _make_target(
+        db_session, has_preference=True, enabled=False
+    )
+    scheduled_at = datetime.combine(
+        homework.due_on - timedelta(days=1), time(18, 0), tzinfo=ZoneInfo(school.timezone)
+    )
+    dedupe_key = (
+        f"homework:{homework.id}:private:{user.telegram_id}:{scheduled_at.isoformat()}"
+    )
+    for index, terminal_status in enumerate(
+        [ReminderStatus.SENT, ReminderStatus.FAILED, ReminderStatus.UNCERTAIN]
+    ):
+        # Keep the unique dedupe key stable; update the existing row between attempts.
+        if index == 0:
+            job = ReminderJob(
+                class_id=class_group.id, entity_type="homework", entity_id=homework.id,
+                target_type="private", target_id=user.telegram_id, message_text="terminal",
+                scheduled_at=scheduled_at, dedupe_key=dedupe_key, status=terminal_status,
+            )
+            db_session.add(job)
+            await db_session.flush()
+        else:
+            job.status = terminal_status
+            await db_session.flush()
+        created, cancelled = await update_user_reminder_preference(
+            db_session, user, class_group, school.timezone, "homework", True
+        )
+        assert created == 0
+        assert cancelled == 0
+        assert job.status == terminal_status
+
+
+@pytest.mark.asyncio
+async def test_reenable_does_not_duplicate_existing_pending_private_reminder(db_session):
+    class_group, homework, user, school = await _make_target(
+        db_session, has_preference=True, enabled=False
+    )
+    scheduled_at = datetime.combine(
+        homework.due_on - timedelta(days=1), time(18, 0), tzinfo=ZoneInfo(school.timezone)
+    )
+    dedupe_key = (
+        f"homework:{homework.id}:private:{user.telegram_id}:{scheduled_at.isoformat()}"
+    )
+    job = ReminderJob(
+        class_id=class_group.id, entity_type="homework", entity_id=homework.id,
+        target_type="private", target_id=user.telegram_id, message_text="already queued",
+        scheduled_at=scheduled_at, dedupe_key=dedupe_key, status=ReminderStatus.PENDING,
+    )
+    db_session.add(job)
+    await db_session.flush()
+
+    created, cancelled = await update_user_reminder_preference(
+        db_session, user, class_group, school.timezone, "homework", True
+    )
+    assert created == 0
+    assert cancelled == 0
+    assert job.status == ReminderStatus.PENDING
+    assert job.attempts == 0
