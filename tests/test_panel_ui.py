@@ -7,6 +7,7 @@ from classmate.bot.keyboards import (
     group_menu_keyboard,
     main_reply_keyboard,
     wizard_cancel_keyboard,
+    wizard_inline_cancel_keyboard,
 )
 from classmate.bot.group_handlers import router as group_router
 from classmate.bot.wizard_handlers import router as wizard_router
@@ -107,6 +108,14 @@ def test_class_manager_sees_class_management_but_not_platform_admin():
     assert "🕓 صف بررسی" in labels
     assert "🛡 پنل مدیر کل" not in labels
     assert "🏢 مدیریت مدرسه" not in labels
+
+
+def test_group_wizard_cancel_button_is_bound_to_its_owner():
+    keyboard = wizard_inline_cancel_keyboard(123456)
+    button = keyboard.inline_keyboard[0][0]
+
+    assert button.text == "⬅️ لغو ثبت"
+    assert button.callback_data == "wizard:cancel:123456"
 
 
 def test_wizard_keyboard_replaces_main_menu_with_only_a_reply_back_button():
@@ -222,6 +231,11 @@ def test_record_wizard_has_a_back_handler_for_every_input_state():
         for handler in wizard_router.observers["message"].handlers
     ]
     assert "wizard_back_button" in message_handlers
+    callback_handlers = [
+        handler.callback.__name__
+        for handler in wizard_router.observers["callback_query"].handlers
+    ]
+    assert "wizard_inline_cancel" in callback_handlers
 
 
 def test_group_menu_exposes_records_but_review_is_role_gated():
