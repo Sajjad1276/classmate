@@ -8,7 +8,7 @@ from aiogram.fsm.context import FSMContext
 from aiogram.types import InlineKeyboardButton, Message
 from sqlalchemy import select
 
-from classmate.bot.handlers import WEEKDAYS, _ensure_group_member, _parse_pipe_args, _user
+from classmate.bot.context import WEEKDAYS, _ensure_group_member, _parse_pipe_args, _user
 from classmate.bot.states import PanelInput
 from classmate.bot.formatters import _format_exams, _format_homework
 from classmate.core.config import get_settings
