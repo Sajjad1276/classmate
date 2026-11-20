@@ -324,7 +324,7 @@ async def _show_classes(
         callback,
         state,
         "کلاس موردنظر را انتخاب کن:",
-        _markup(rows),
+        _markup(rows, back),
     )
 
 
@@ -1003,6 +1003,20 @@ async def main_button_handler(message: Message, state: FSMContext, bot: Bot) -> 
         )
         await state.update_data(panel_message_id=prompt.message_id)
         return
+    if label == "🏫 کلاس‌ها":
+        await _show_classes_menu_from_message(message, state, bot)
+        return
+    if label == "📚 امور درسی":
+        await _show_academic_menu_from_message(message, state, bot)
+        return
+    if label == "🔔 یادآوری‌ها":
+        await _show_class_selector_from_message(
+            message, state, bot, message.from_user, "reminders"
+        )
+        return
+    if label == "⚙️ مدیریت":
+        await _show_management_menu_from_message(message, state, bot)
+        return
     if label == "🏫 کلاس‌های من":
         classes = await _get_classes(message.from_user)
         if not classes:
@@ -1065,6 +1079,100 @@ async def main_button_handler(message: Message, state: FSMContext, bot: Bot) -> 
         ]
         await _render_from_message(message, state, bot, "🛡 <b>پنل مدیر کل ClassMate</b>", _markup(rows))
         return
+
+
+@router.callback_query(F.data == "ui:classes_menu")
+async def classes_menu_callback(callback: CallbackQuery, state: FSMContext):
+    await _render_from_callback(
+        callback, state,
+        "🏫 <b>بخش کلاس‌ها</b>\\nکلاس‌های متصل یا عضویت با کد دعوت را انتخاب کن.",
+        _classes_menu_markup(),
+    )
+
+
+@router.callback_query(F.data == "ui:academic_menu")
+async def academic_menu_callback(callback: CallbackQuery, state: FSMContext):
+    await _render_from_callback(
+        callback, state,
+        "📚 <b>امور درسی</b>\\nبرای مشاهده اطلاعات، ابتدا بخش موردنظر را انتخاب کن.",
+        _academic_menu_markup(),
+    )
+
+
+@router.callback_query(F.data == "ui:management_menu")
+async def management_menu_callback(callback: CallbackQuery, state: FSMContext):
+    _, roles = await _current_user(callback)
+    if not (roles["manager"] or roles["school"] or roles["platform"]):
+        await callback.answer("به بخش مدیریت دسترسی نداری.", show_alert=True)
+        return
+    await _render_from_callback(
+        callback, state,
+        "⚙️ <b>مدیریت</b>\\nسطح مدیریتی موردنظر را انتخاب کن.",
+        _management_menu_markup(roles),
+    )
+
+
+@router.callback_query(F.data.startswith("ui:home_action:"))
+async def home_academic_action(callback: CallbackQuery, state: FSMContext, bot: Bot):
+    action = callback.data.rsplit(":", 1)[1]
+    if action not in {"homework", "exams", "week", "today", "ask"}:
+        await callback.answer("گزینهٔ امور درسی معتبر نیست.", show_alert=True)
+        return
+    await callback.answer()
+    await _show_class_selector_from_message(
+        callback.message, state, bot, callback.from_user, action, back="ui:academic_menu"
+    )
+
+
+@router.callback_query(F.data.startswith("ui:manage_action:"))
+async def management_action(callback: CallbackQuery, state: FSMContext, bot: Bot):
+    action = callback.data.rsplit(":", 1)[1]
+    _, roles = await _current_user(callback)
+    if action == "class":
+        if not roles["manager"]:
+            await callback.answer("مجوز مدیریت کلاس نداری.", show_alert=True)
+            return
+        await callback.answer()
+        await _show_class_selector_from_message(
+            callback.message, state, bot, callback.from_user, "manage",
+            back="ui:management_menu",
+        )
+        return
+    if action == "school":
+        if not roles["school"]:
+            await callback.answer("مجوز مدیریت مدرسه نداری.", show_alert=True)
+            return
+        schools = await _admin_schools(callback.from_user)
+        rows = [
+            [_button(f"🏫 {name[:42]}", f"ui:school_manage:{school_id}")]
+            for school_id, name in schools
+        ]
+        body = (
+            "🏢 <b>مدیریت مدرسه</b>\\nمدرسه‌ای را برای مدیریت انتخاب کن."
+            if schools else "برای این حساب مدرسه فعالی جهت مدیریت ثبت نشده است."
+        )
+        await _render_from_callback(
+            callback, state, body, _markup(rows, "ui:management_menu")
+        )
+        return
+    if action == "platform":
+        if not roles["platform"]:
+            await callback.answer("این پنل فقط برای مدیر کل است.", show_alert=True)
+            return
+        rows = [
+            [_button("🏫 ایجاد مدرسه و سال تحصیلی", "ui:form:school_new")],
+            [_button("👤 تعیین مدیر مدرسه", "ui:form:school_admin_add")],
+            [_button("📚 مدیریت مدرسه‌ها و کلاس‌ها", "ui:school")],
+        ]
+        await _render_from_callback(
+            callback, state,
+            "🛡 <b>پنل مدیر کل ClassMate</b>\\n"
+            f"حساب مدیر کل فعال است. شناسه تلگرام: <code>{callback.from_user.id}</code>\\n"
+            "از این بخش می‌توانی ساختار مدرسه‌ها و مدیران را مدیریت کنی.",
+            _markup(rows, "ui:management_menu"),
+        )
+        return
+    await callback.answer("گزینهٔ مدیریتی شناخته‌شده نیست.", show_alert=True)
 
 
 @router.callback_query(F.data == "ui:close")
