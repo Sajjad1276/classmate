@@ -880,10 +880,11 @@ async def main_button_handler(message: Message, state: FSMContext, bot: Bot) -> 
     await state.clear()
     if panel_message_id is not None:
         await state.update_data(panel_message_id=panel_message_id)
-    try:
-        await message.delete()
-    except TelegramBadRequest:
-        pass
+    if label != "🔑 عضویت در کلاس":
+        try:
+            await message.delete()
+        except TelegramBadRequest:
+            pass
     if label == "⬅️ بازگشت":
         if panel_message_id is not None:
             try:
