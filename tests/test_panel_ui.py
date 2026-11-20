@@ -1,5 +1,10 @@
 from classmate.bot.keyboards import main_reply_keyboard, wizard_cancel_keyboard
-from classmate.bot.panel_handlers import _is_panel_input_text, _markup, _parent_for_form
+from classmate.bot.panel_handlers import (
+    _is_panel_input_text,
+    _markup,
+    _parent_for_form,
+    router as panel_router,
+)
 
 
 def _labels(markup) -> set[str]:
@@ -72,3 +77,13 @@ def test_join_form_has_an_explicit_back_callback():
     back = markup.inline_keyboard[-1][0]
     assert back.text == "⬅️ بازگشت"
     assert back.callback_data == "ui:cancel_input"
+
+
+def test_panel_router_registers_confirmed_cancellation_callbacks():
+    callback_names = {
+        handler.callback.__name__
+        for handler in panel_router.observers["callback_query"].handlers
+    }
+    assert "cancelable_records_callback" in callback_names
+    assert "cancel_record_confirm_callback" in callback_names
+    assert "cancel_record_execute_callback" in callback_names
