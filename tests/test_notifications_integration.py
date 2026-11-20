@@ -2,6 +2,7 @@ from datetime import date, datetime, time, timedelta, timezone
 from zoneinfo import ZoneInfo
 
 import pytest
+from sqlalchemy import select
 
 from classmate.db.models import (
     AcademicYear,
@@ -147,6 +148,13 @@ async def test_turning_homework_back_on_reactivates_future_private_reminder(db_s
     assert job.last_error is None
     assert job.sent_at is None
     assert job.target_type == "private"
+    group_jobs = await db_session.scalars(
+        select(ReminderJob).where(
+            ReminderJob.class_id == class_group.id,
+            ReminderJob.target_type == "group",
+        )
+    )
+    assert list(group_jobs) == []
 
 
 @pytest.mark.asyncio
@@ -188,6 +196,7 @@ async def test_reenable_does_not_duplicate_existing_pending_private_reminder(db_
     class_group, homework, user, school = await _make_target(
         db_session, has_preference=True, enabled=False
     )
+    class_group.group_chat_id = -100222333444
     scheduled_at = datetime.combine(
         homework.due_on - timedelta(days=1), time(18, 0), tzinfo=ZoneInfo(school.timezone)
     )
