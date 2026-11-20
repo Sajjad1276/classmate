@@ -51,7 +51,7 @@ Opening an inner panel hides the persistent Reply Keyboard. One Back button clos
 ## Telegram group support
 
 - A school can be linked to one central group through Telegram's one-time startgroup link.
-- A class can be linked to its own group with /connect <code>; the code is one-time and expires after 30 minutes. The command checks that its issuer is a Telegram group administrator.
+- A class can be linked to its own group with /connect <code>; the code is one-time and expires after 30 minutes. The command checks that its issuer is a Telegram group administrator and that the bot itself is an administrator in the target group. A Telegram chat cannot be bound as both a school group and a class group.
 - Linked groups support command-based class workflows, including approved homework/exam/report queries, weekly timetable, next-lesson search, submissions and review/cancellation by authorized roles.
 - A dedicated inline group dashboard and broadcast/announcement tools are not yet implemented.
 
