@@ -15,7 +15,8 @@ from classmate.bot.wizard_handlers import router as wizard_router
 from classmate.bot.management_handlers import router as management_router
 from classmate.bot.middlewares import ProcessedUpdateMiddleware
 from classmate.db.fsm_storage import PostgresFSMStorage
-from classmate.db.session import SessionFactory, dispose_engine
+from classmate.db.session import SessionFactory, dispose_engine, engine
+from classmate.db.polling_lock import acquire_polling_lock, release_polling_lock
 from classmate.core.config import get_settings
 from classmate.core.logging import configure_logging
 
@@ -32,7 +33,7 @@ async def main() -> None:
         token=token,
         default=DefaultBotProperties(parse_mode=ParseMode.HTML),
     )
-    await setup_command_menu(bot)
+    polling_lock = None
     dispatcher = Dispatcher(storage=PostgresFSMStorage(SessionFactory))
     dispatcher.update.outer_middleware(ProcessedUpdateMiddleware(SessionFactory))
     dispatcher.include_router(approval_router)
@@ -42,14 +43,22 @@ async def main() -> None:
     dispatcher.include_router(router)
     dispatcher.include_router(management_router)
     dispatcher.include_router(panel_router)
-    logging.getLogger(__name__).info("Starting ClassMate bot polling")
     try:
+        # Railway can briefly overlap old/new containers during rolling deploys.
+        # Keep only one process polling the same Telegram bot token at a time.
+        polling_lock = await acquire_polling_lock(engine)
+        await setup_command_menu(bot)
+        logging.getLogger(__name__).info("Starting ClassMate bot polling")
         await dispatcher.start_polling(bot, allowed_updates=dispatcher.resolve_used_update_types())
     finally:
         try:
             await bot.session.close()
         finally:
-            await dispose_engine()
+            try:
+                if polling_lock is not None:
+                    await release_polling_lock(polling_lock)
+            finally:
+                await dispose_engine()
 
 
 if __name__ == "__main__":
