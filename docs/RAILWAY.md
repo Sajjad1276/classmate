@@ -29,7 +29,7 @@ Never commit real tokens, passwords or connection strings. Do not paste them int
 
 ## Migration ordering
 
-Only the `classmate` bot service runs `alembic upgrade head` as its pre-deploy command. The worker entry point calls the schema-readiness check and waits until the database's `alembic_version` matches the repository's Alembic head before starting its polling loop. This avoids two services racing to apply the same migration.
+Only the `classmate` bot service runs `alembic upgrade head (current schema head: 0005_daily_report_multi_submit)` as its pre-deploy command. The worker entry point calls the schema-readiness check and waits until the database's `alembic_version` matches the repository's Alembic head before starting its polling loop. This avoids two services racing to apply the same migration.
 
 The migration runs on every bot deployment; `upgrade head` is safe to repeat for an already-current database. Keep schema changes in new Alembic revisions. Do not edit an already-applied migration.
 
@@ -54,6 +54,7 @@ The migration runs on every bot deployment; `upgrade head` is safe to repeat for
 - A Telegram token is a credential. Rotate it with BotFather if it is exposed.
 - Only trusted approvers can approve submitted homework, exams and reports; submitters cannot approve their own records.
 - Reminder delivery is at-least-once, not exactly-once. A retry around a process/database interruption can cause a duplicate Telegram message.
-- FSM wizard state is in-memory in this MVP. Submitted records and reminder jobs are persisted in PostgreSQL.
+- FSM wizard state and processed-update leases are persisted in PostgreSQL. The bot also holds a session-level PostgreSQL advisory lock while long polling, so overlapping Railway deployments serialize instead of competing for the same Telegram token.
+- Reminder outcomes that are ambiguous after network/worker interruption are marked uncertain for manual reconciliation; automatic retries are bounded and avoid blindly duplicating sends.
 - Keep the Postgres volume attached. Do not delete it unless intentionally destroying all ClassMate data.
-- The current service is configured for one replica per application process. Do not scale the bot to multiple replicas while using Telegram long polling with the same token; duplicate polling conflicts may occur.
+- The polling advisory lock serializes bot replicas, but a single bot replica remains the recommended production topology.
