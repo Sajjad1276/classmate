@@ -1,13 +1,20 @@
+from types import SimpleNamespace
+from unittest.mock import AsyncMock
+
+from aiogram.types import ReplyKeyboardMarkup
+
 from classmate.bot.keyboards import (
     group_menu_keyboard,
     main_reply_keyboard,
     wizard_cancel_keyboard,
 )
 from classmate.bot.group_handlers import router as group_router
+from classmate.bot.panel_form_processing import _send_join_retry_message
 from classmate.bot.panel_handlers import (
     _is_panel_input_text,
     _markup,
     _parent_for_form,
+    main_button_handler,
     router as panel_router,
 )
 
@@ -60,9 +67,11 @@ def test_class_manager_sees_class_management_but_not_platform_admin():
     assert "🏢 مدیریت مدرسه" not in labels
 
 
-def test_wizard_keyboard_has_a_return_to_menu_control():
-    labels = _labels(wizard_cancel_keyboard())
-    assert labels == {"⬅️ بازگشت"}
+def test_wizard_keyboard_replaces_main_menu_with_only_a_reply_back_button():
+    keyboard = wizard_cancel_keyboard()
+    assert isinstance(keyboard, ReplyKeyboardMarkup)
+    assert _labels(keyboard) == {"⬅️ بازگشت"}
+    assert not getattr(keyboard, "inline_keyboard", None)
 
 
 def test_panel_input_does_not_consume_telegram_commands():
@@ -77,11 +86,51 @@ def test_join_form_back_returns_directly_to_main_menu():
     assert _parent_for_form("join", None) == "ui:close"
 
 
-def test_join_form_has_an_explicit_back_callback():
-    markup = _markup([], "ui:cancel_input")
-    back = markup.inline_keyboard[-1][0]
-    assert back.text == "⬅️ بازگشت"
-    assert back.callback_data == "ui:cancel_input"
+async def test_join_button_replaces_the_existing_panel_and_shows_reply_keyboard_back():
+    state = SimpleNamespace(
+        get_data=AsyncMock(return_value={"panel_message_id": 99}),
+        clear=AsyncMock(),
+        update_data=AsyncMock(),
+        set_state=AsyncMock(),
+    )
+    message = SimpleNamespace(
+        text="🔑 عضویت در کلاس",
+        chat=SimpleNamespace(id=123),
+        delete=AsyncMock(),
+    )
+    prompt = SimpleNamespace(message_id=456)
+    bot = SimpleNamespace(
+        delete_message=AsyncMock(),
+        send_message=AsyncMock(return_value=prompt),
+    )
+
+    await main_button_handler(message, state, bot)
+
+    bot.delete_message.assert_awaited_once_with(123, 99)
+    sent_args = bot.send_message.await_args
+    assert sent_args.args[:2] == (
+        123,
+        "🔑 کد دعوت کلاس را وارد کن. این کد را از مدیر کلاس دریافت کن.",
+    )
+    assert isinstance(sent_args.kwargs["reply_markup"], ReplyKeyboardMarkup)
+    assert _labels(sent_args.kwargs["reply_markup"]) == {"⬅️ بازگشت"}
+    state.update_data.assert_awaited()
+    assert state.update_data.await_args_list[-1].kwargs == {"panel_message_id": 456}
+
+
+async def test_invalid_join_code_is_sent_as_a_separate_message():
+    bot = SimpleNamespace(send_message=AsyncMock())
+
+    await _send_join_retry_message(
+        bot,
+        123,
+        ValueError("کد دعوت معتبر نیست یا اعتبار آن تمام شده است."),
+    )
+
+    bot.send_message.assert_awaited_once_with(
+        123,
+        "⚠️ کد دعوت معتبر نیست یا اعتبار آن تمام شده است.\n\nکد را دوباره بررسی و وارد کن.",
+    )
 
 
 def test_panel_router_registers_confirmed_cancellation_callbacks():
