@@ -17,7 +17,7 @@ from aiogram.types import (
 )
 from sqlalchemy import select
 
-from classmate.bot.handlers import (
+from classmate.bot.context import (
     WEEKDAYS,
     _classes_for_user,
     _user,
