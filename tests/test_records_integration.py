@@ -24,6 +24,7 @@ from classmate.services.records import (
     create_homework,
     create_daily_report,
     get_subject,
+    list_reports,
     reject_record,
     soft_delete_subject,
     restore_subject,
