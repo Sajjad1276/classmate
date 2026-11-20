@@ -50,7 +50,7 @@ def test_classes_menu_groups_my_classes_and_join_actions():
         for row in _classes_menu_markup().inline_keyboard
         for button in row
     }
-    assert callback_data == {"ui:classes", "ui:form:join"}
+    assert callback_data == {"ui:classes", "ui:form:join", "ui:close"}
 
 
 def test_academic_menu_groups_all_class_information_views():
