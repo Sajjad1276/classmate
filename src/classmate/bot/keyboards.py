@@ -86,21 +86,14 @@ def main_reply_keyboard(
 ) -> ReplyKeyboardMarkup:
     """Persistent, role-aware private-chat home keyboard."""
     rows = [
-        [KeyboardButton(text="🏫 کلاس‌های من"), KeyboardButton(text="🔑 عضویت در کلاس")],
-        [KeyboardButton(text="➕ ثبت اطلاعات")],
-        [KeyboardButton(text="📚 تکالیف"), KeyboardButton(text="📝 امتحانات")],
-        [KeyboardButton(text="📅 برنامه هفتگی"), KeyboardButton(text="🗒 گزارش امروز")],
-        [KeyboardButton(text="🔎 جست‌وجو"), KeyboardButton(text="🔔 یادآوری")],
+        [KeyboardButton(text="🏫 کلاس‌ها"), KeyboardButton(text="📚 امور درسی")],
+        [KeyboardButton(text="➕ ثبت اطلاعات"), KeyboardButton(text="🔔 یادآوری‌ها")],
         [KeyboardButton(text="ℹ️ راهنمای استفاده")],
     ]
     if is_approver:
-        rows.append([KeyboardButton(text="🕓 صف بررسی")])
-    if is_class_manager:
-        rows.append([KeyboardButton(text="⚙️ مدیریت کلاس")])
-    if is_school_admin:
-        rows.append([KeyboardButton(text="🏢 مدیریت مدرسه")])
-    if is_platform_admin:
-        rows.append([KeyboardButton(text="🛡 پنل مدیر کل")])
+        rows.insert(2, [KeyboardButton(text="🕓 صف بررسی")])
+    if is_class_manager or is_school_admin or is_platform_admin:
+        rows.insert(3 if is_approver else 2, [KeyboardButton(text="⚙️ مدیریت")])
     return ReplyKeyboardMarkup(
         keyboard=rows,
         resize_keyboard=True,
