@@ -21,7 +21,7 @@ The bootstrap list is only for the first platform-admin setup. Keep it limited t
 
 ## Group onboarding and supported commands
 
-A central school group is linked using the one-time Telegram startgroup link from the school panel. A class group is linked by a Telegram group administrator running /connect <code> inside that group; the code expires after 30 minutes and is consumed on success. The private UI is button-driven. Group support currently uses addressed commands rather than a dedicated inline dashboard.
+A central school group is linked using the one-time Telegram startgroup link from the school panel. A class group is linked by a Telegram group administrator running /connect <code> inside that group; the code expires after 30 minutes and is consumed on success. Both the command issuer and the bot must be Telegram administrators in that group. A Telegram chat cannot be bound as both a school and class group. Group-binding changes are serialized in PostgreSQL. The private UI is button-driven. Group support currently uses addressed commands rather than a dedicated inline dashboard.
 
 In linked groups, supported commands include /homework, /exams, /today, /week, /ask <question>, /subject_add, /timetable_set, /pending and /cancel_record (authorization is checked server-side). The inline group dashboard, broadcast tools and automatic ingestion of arbitrary messages are not implemented. Keep Telegram Privacy Mode enabled.
 
