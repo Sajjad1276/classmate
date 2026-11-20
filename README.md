@@ -42,7 +42,7 @@ Private-chat actions are started from Telegram keyboard buttons and inline panel
 - **ثبت اطلاعات** — start a guided form for homework, exams or a daily report.
 - **تکالیف / امتحانات / برنامه هفتگی / گزارش امروز** — display approved class information.
 - **جست‌وجو** — deterministic keyword search and next-lesson lookup against approved data.
-- **یادآوری** — enable or disable private homework and exam reminders.
+- **یادآوری** — enable or disable private homework and exam reminders; opt-out cancels only the current user's queued private jobs for that category, and opt-in rebuilds upcoming approved reminders without duplicating existing jobs.
 - **صف بررسی** — available only to approvers for classes where they have permission.
 - **مدیریت کلاس / مدیریت مدرسه / پنل مدیر کل** — displayed only for users with the corresponding application role.
 
