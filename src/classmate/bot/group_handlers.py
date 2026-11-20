@@ -2,7 +2,6 @@ import logging
 from datetime import datetime, timezone
 from html import escape
 from zoneinfo import ZoneInfo
-from html import escape
 
 from aiogram import Bot, F, Router
 from aiogram.filters import Command
@@ -12,7 +11,7 @@ from sqlalchemy import or_, select
 from classmate.bot.context import _user
 from classmate.db.models import ClassGroup, School, Subject, TimetableEntry
 from classmate.db.session import SessionFactory
-from classmate.bot.context import WEEKDAYS, _user
+from classmate.bot.context import WEEKDAYS
 from classmate.bot.formatters import _format_exams, _format_homework
 from classmate.bot.keyboards import approval_keyboard
 from classmate.domain.dates import jalali_date
