@@ -28,8 +28,6 @@ from classmate.bot.keyboards import main_reply_keyboard
 from classmate.bot.states import PanelInput
 from classmate.domain.enums import ENTITY_LABELS, EntityType, Role
 from classmate.db.models import (
-    AcademicYear,
-    ClassGroup,
     ClassMembership,
     NotificationPreference,
     School,
@@ -48,10 +46,7 @@ from classmate.services.permissions import (
     user_can_access_class,
 )
 from classmate.services.notifications import update_user_reminder_preference
-from classmate.services.group_bindings import (
-    is_chat_bound_to_class_group,
-    lock_group_binding_mutations,
-)
+from classmate.services.group_bindings import lock_group_binding_mutations
 from classmate.services.records import (
     approve_record,
     list_exams,
