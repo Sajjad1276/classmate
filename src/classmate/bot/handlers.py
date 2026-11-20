@@ -7,13 +7,19 @@ from aiogram import Bot, F, Router
 from aiogram.filters import Command, CommandStart
 from aiogram.fsm.context import FSMContext
 from aiogram.types import BotCommandScopeChat, CallbackQuery, Message
-from sqlalchemy import or_, select
-from sqlalchemy.ext.asyncio import AsyncSession
+from sqlalchemy import select
 
+from classmate.bot.context import (
+    WEEKDAYS,
+    _class_from_message,
+    _classes_for_user,
+    _main_keyboard_for_user,
+    _parse_pipe_args,
+    _user,
+)
 from classmate.bot.formatters import _format_exams, _format_homework
 from classmate.bot.keyboards import (
     main_menu,
-    main_reply_keyboard,
     new_record_menu,
 )
 from classmate.core.config import get_settings
@@ -21,7 +27,6 @@ from classmate.db.models import (
     AcademicYear,
     ClassGroup,
     ClassMembership,
-    ClassSubject,
     School,
     SchoolMembership,
     NotificationPreference,
@@ -36,12 +41,10 @@ from classmate.domain.dates import (
     jalali_datetime,
 )
 from classmate.services.permissions import (
-    ensure_user,
     get_class_with_school,
     hash_code,
     is_school_admin,
     make_code,
-    user_can_access_class,
 )
 from classmate.services.records import (
     add_subject,
