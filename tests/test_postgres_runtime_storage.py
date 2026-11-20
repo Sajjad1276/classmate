@@ -157,3 +157,82 @@ async def test_postgres_polling_lock_serializes_bot_instances():
     finally:
         await second_connection.close()
         await engine.dispose()
+
+
+@pytest.mark.asyncio
+async def test_cancelled_processing_reminder_is_not_sent_or_reopened(monkeypatch):
+    database_url = os.getenv("DATABASE_URL")
+    if not database_url:
+        pytest.skip("DATABASE_URL is required for PostgreSQL reminder cancellation tests")
+    from datetime import date, datetime, timedelta, timezone
+
+    from classmate.db.models import (
+        AcademicYear,
+        ClassGroup,
+        Homework,
+        ReminderJob,
+        School,
+        Subject,
+        User,
+    )
+    from classmate.domain.enums import RecordStatus, ReminderStatus
+    from classmate.services.records import set_reminders_cancelled
+    from classmate.worker import main as worker_main
+
+    engine = create_async_engine(database_url)
+    factory = async_sessionmaker(engine, expire_on_commit=False)
+    monkeypatch.setattr(worker_main, "SessionFactory", factory)
+    token = f"processing-cancel:{time.time_ns()}"
+    school_id = None
+    try:
+        async with factory() as session:
+            async with session.begin():
+                school = School(name=token, timezone="UTC")
+                session.add(school)
+                await session.flush()
+                school_id = school.id
+                year = AcademicYear(school_id=school.id, name="worker-test")
+                session.add(year)
+                await session.flush()
+                class_group = ClassGroup(academic_year_id=year.id, name="worker-test", grade="10")
+                creator = User(telegram_id=970000001, full_name="Worker test")
+                session.add_all([class_group, creator])
+                await session.flush()
+                subject = Subject(school_id=school.id, name="History", normalized_name=token)
+                session.add(subject)
+                await session.flush()
+                homework = Homework(
+                    class_id=class_group.id, subject_id=subject.id,
+                    title="Test", description="Test", due_on=date.today(),
+                    created_by=creator.id, status=RecordStatus.APPROVED,
+                )
+                session.add(homework)
+                await session.flush()
+                job = ReminderJob(
+                    class_id=class_group.id, entity_type="homework", entity_id=homework.id,
+                    target_type="private", target_id=creator.telegram_id,
+                    message_text="must not send", scheduled_at=datetime.now(timezone.utc),
+                    dedupe_key=token, status=ReminderStatus.PROCESSING,
+                    locked_at=datetime.now(timezone.utc),
+                )
+                session.add(job)
+                await session.flush()
+                job_id, homework_id, class_id = job.id, homework.id, class_group.id
+        async with factory() as session:
+            async with session.begin():
+                homework = await session.get(Homework, homework_id)
+                homework.status = RecordStatus.CANCELLED
+                await set_reminders_cancelled(session, "homework", homework_id)
+        assert not await worker_main.job_is_still_sendable(job_id)
+        await worker_main.finish_job(job_id)
+        async with factory() as session:
+            job = await session.get(ReminderJob, job_id)
+            assert job.status == ReminderStatus.CANCELLED
+            assert job.sent_at is None
+    finally:
+        async with factory() as session:
+            async with session.begin():
+                await session.execute(delete(ReminderJob).where(ReminderJob.dedupe_key == token))
+                if school_id is not None:
+                    await session.execute(delete(School).where(School.id == school_id))
+        await engine.dispose()
