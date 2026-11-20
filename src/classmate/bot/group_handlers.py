@@ -7,7 +7,7 @@ from aiogram.filters import Command
 from aiogram.types import Message
 from sqlalchemy import select
 
-from classmate.bot.handlers import _user
+from classmate.bot.context import _user
 from classmate.db.models import ClassGroup, School
 from classmate.db.session import SessionFactory
 from classmate.services.permissions import hash_code, is_school_admin
