@@ -24,7 +24,7 @@ from classmate.bot.context import (
 )
 from classmate.bot.formatters import _format_exams, _format_homework
 from classmate.bot.panel_form_processing import handle_panel_input, handle_search_input
-from classmate.bot.keyboards import main_reply_keyboard
+from classmate.bot.keyboards import main_reply_keyboard, wizard_cancel_keyboard
 from classmate.bot.states import PanelInput
 from classmate.domain.enums import ENTITY_LABELS, EntityType, Role
 from classmate.db.models import (
@@ -913,13 +913,25 @@ async def main_button_handler(message: Message, state: FSMContext, bot: Bot) -> 
         )
         return
     if label == "🔑 عضویت در کلاس":
+        # Replace the full home keyboard with a single persistent back button
+        # while the user is entering an invitation code.
+        if panel_message_id is not None:
+            try:
+                await bot.delete_message(message.chat.id, panel_message_id)
+            except TelegramBadRequest:
+                pass
         await state.set_state(PanelInput.input)
-        await state.update_data(panel_form="join", panel_class_id=None)
-        await _render_from_message(
-            message, state, bot,
-            "🔑 کد دعوت کلاس را وارد کن. این کد را از مدیر کلاس دریافت کن.",
-            _markup([], "ui:cancel_input"),
+        await state.update_data(
+            panel_form="join",
+            panel_class_id=None,
+            panel_school_id=None,
         )
+        prompt = await bot.send_message(
+            message.chat.id,
+            "🔑 کد دعوت کلاس را وارد کن. این کد را از مدیر کلاس دریافت کن.",
+            reply_markup=wizard_cancel_keyboard(),
+        )
+        await state.update_data(panel_message_id=prompt.message_id)
         return
     if label == "🏫 کلاس‌های من":
         classes = await _get_classes(message.from_user)
