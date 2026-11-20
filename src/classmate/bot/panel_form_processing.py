@@ -28,6 +28,7 @@ from classmate.services.permissions import (
     get_class_with_school,
     hash_code,
     is_school_admin,
+    can_manage_class,
     make_code,
 )
 from classmate.services.records import (
@@ -272,16 +273,8 @@ async def handle_panel_input(
                     if not context:
                         raise ValueError("کلاس پیدا نشد.")
                     class_group, _, school = context
-                    manager = await session.scalar(
-                        select(ClassMembership.id).where(
-                            ClassMembership.class_id == class_id,
-                            ClassMembership.user_id == actor.id,
-                            ClassMembership.role.in_([Role.CLASS_MANAGER, Role.TRUSTED_APPROVER]),
-                            ClassMembership.is_active.is_(True),
-                        )
-                    )
-                    if not actor.is_platform_admin and not await is_school_admin(session, actor, school.id) and manager is None:
-                        raise PermissionError("برای افزودن درس مجوز نداری.")
+                    if not await can_manage_class(session, actor, class_id):
+                        raise PermissionError("فقط مدیر مدرسه یا مدیر کلاس می‌تواند درس اضافه کند.")
                     subject = await add_subject(session, class_id, school.id, raw.strip())
                     result_text = f"✅ درس «{escape(subject.name)}» به کلاس افزوده شد."
                 elif form_name == "timetable_set":
