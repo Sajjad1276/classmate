@@ -526,7 +526,12 @@ async def set_reminders_cancelled(
             select(ReminderJob).where(
                 ReminderJob.entity_type == entity_type,
                 ReminderJob.entity_id == entity_id,
-                ReminderJob.status.in_([ReminderStatus.PENDING, ReminderStatus.RETRY, ReminderStatus.UNCERTAIN]),
+                ReminderJob.status.in_([
+                    ReminderStatus.PENDING,
+                    ReminderStatus.RETRY,
+                    ReminderStatus.PROCESSING,
+                    ReminderStatus.UNCERTAIN,
+                ]),
             )
         )
     ).scalars().all()
