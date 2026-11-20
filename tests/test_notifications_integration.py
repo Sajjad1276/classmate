@@ -9,6 +9,7 @@ from classmate.db.models import (
     ClassGroup,
     ClassMembership,
     ClassSubject,
+    Exam,
     Homework,
     NotificationPreference,
     ReminderJob,
@@ -218,3 +219,109 @@ async def test_reenable_does_not_duplicate_existing_pending_private_reminder(db_
     assert cancelled == 0
     assert job.status == ReminderStatus.PENDING
     assert job.attempts == 0
+
+
+@pytest.mark.asyncio
+async def test_exam_opt_out_cancels_only_this_users_private_exam_jobs(db_session):
+    class_group, homework, user, school = await _make_target(
+        db_session, has_preference=True, enabled=True
+    )
+    class_group.group_chat_id = -100555666777
+    exam_time = datetime.now(timezone.utc) + timedelta(days=3)
+    exam = Exam(
+        class_id=class_group.id,
+        subject_id=homework.subject_id,
+        title="Physics exam",
+        scope="Units 1-3",
+        exam_type="test",
+        scheduled_at=exam_time,
+        created_by=user.id,
+        status="APPROVED",
+    )
+    other_user = User(telegram_id=920000003, full_name="Another student", private_chat_started=True)
+    db_session.add_all([exam, other_user])
+    await db_session.flush()
+    jobs = [
+        ReminderJob(
+            class_id=class_group.id, entity_type="exam", entity_id=exam.id,
+            target_type="private", target_id=user.telegram_id, message_text="own exam",
+            scheduled_at=exam_time - timedelta(hours=24), dedupe_key="exam-toggle:own",
+        ),
+        ReminderJob(
+            class_id=class_group.id, entity_type="exam", entity_id=exam.id,
+            target_type="private", target_id=other_user.telegram_id, message_text="other exam",
+            scheduled_at=exam_time - timedelta(hours=24), dedupe_key="exam-toggle:other",
+        ),
+        ReminderJob(
+            class_id=class_group.id, entity_type="exam", entity_id=exam.id,
+            target_type="group", target_id=class_group.group_chat_id, message_text="group exam",
+            scheduled_at=exam_time - timedelta(hours=24), dedupe_key="exam-toggle:group",
+        ),
+        ReminderJob(
+            class_id=class_group.id, entity_type="homework", entity_id=homework.id,
+            target_type="private", target_id=user.telegram_id, message_text="own homework",
+            scheduled_at=datetime.now(timezone.utc), dedupe_key="exam-toggle:homework",
+        ),
+    ]
+    db_session.add_all(jobs)
+    await db_session.flush()
+
+    created, cancelled = await update_user_reminder_preference(
+        db_session, user, class_group, school.timezone, "exams", False
+    )
+    assert (created, cancelled) == (0, 1)
+    assert jobs[0].status == ReminderStatus.CANCELLED
+    assert jobs[1].status == ReminderStatus.PENDING
+    assert jobs[2].status == ReminderStatus.PENDING
+    assert jobs[3].status == ReminderStatus.PENDING
+
+
+@pytest.mark.asyncio
+async def test_exam_opt_in_reactivates_both_future_private_exam_reminders(db_session):
+    class_group, homework, user, school = await _make_target(
+        db_session, has_preference=True, enabled=True
+    )
+    exam_time = datetime.now(timezone.utc) + timedelta(days=3)
+    exam = Exam(
+        class_id=class_group.id,
+        subject_id=homework.subject_id,
+        title="Physics exam",
+        scope="Units 1-3",
+        exam_type="test",
+        scheduled_at=exam_time,
+        created_by=user.id,
+        status="APPROVED",
+    )
+    db_session.add(exam)
+    await db_session.flush()
+    due_at = exam_time.astimezone(ZoneInfo(school.timezone))
+    reminder_times = [
+        (due_at - timedelta(hours=24), "۲۴ ساعت تا امتحان"),
+        (due_at - timedelta(hours=1), "یک ساعت تا امتحان"),
+    ]
+    jobs = []
+    for index, (scheduled_at, _) in enumerate(reminder_times):
+        dedupe_key = (
+            f"exam:{exam.id}:private:{user.telegram_id}:{scheduled_at.isoformat()}"
+        )
+        job = ReminderJob(
+            class_id=class_group.id, entity_type="exam", entity_id=exam.id,
+            target_type="private", target_id=user.telegram_id, message_text="previously disabled",
+            scheduled_at=scheduled_at, dedupe_key=dedupe_key,
+            status=ReminderStatus.CANCELLED, attempts=index + 1,
+            last_error="cancelled by preference",
+        )
+        db_session.add(job)
+        jobs.append(job)
+    await db_session.flush()
+
+    created, cancelled = await update_user_reminder_preference(
+        db_session, user, class_group, school.timezone, "exams", True
+    )
+    assert (created, cancelled) == (2, 0)
+    for job in jobs:
+        assert job.status == ReminderStatus.PENDING
+        assert job.attempts == 0
+        assert job.last_error is None
+        assert job.sent_at is None
+        assert job.target_type == "private"
