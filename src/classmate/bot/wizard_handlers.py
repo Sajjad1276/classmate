@@ -2,6 +2,7 @@ from datetime import date, datetime
 from zoneinfo import ZoneInfo
 
 from aiogram import Bot, F, Router
+from aiogram.exceptions import TelegramBadRequest
 from aiogram.filters import Command, StateFilter
 from aiogram.fsm.context import FSMContext
 from aiogram.types import CallbackQuery, Message
@@ -182,6 +183,10 @@ async def wizard_class_callback(callback: CallbackQuery, state: FSMContext, bot:
         await callback.answer("به این کلاس دسترسی نداری.", show_alert=True)
         return
     await callback.answer()
+    try:
+        await callback.message.edit_reply_markup(reply_markup=None)
+    except TelegramBadRequest:
+        pass
     await _choose_class_for_wizard(class_id, callback.message.chat.id, state, bot)
 
 
@@ -209,6 +214,10 @@ async def wizard_subject_callback(callback: CallbackQuery, state: FSMContext):
     if subject is None or class_id is None:
         await callback.answer("این درس متعلق به کلاس انتخاب‌شده نیست.", show_alert=True)
         return
+    try:
+        await callback.message.edit_reply_markup(reply_markup=None)
+    except TelegramBadRequest:
+        pass
     await state.update_data(subject_id=subject_id, subject_name=subject.name)
     kind = data["record_type"]
     if kind == "homework":
