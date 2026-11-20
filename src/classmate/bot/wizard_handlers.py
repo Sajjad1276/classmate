@@ -21,6 +21,7 @@ from classmate.bot.keyboards import (
     main_reply_keyboard,
     subject_picker,
     wizard_cancel_keyboard,
+    wizard_inline_cancel_keyboard,
 )
 from classmate.bot.states import RecordWizard
 from classmate.db.models import (
@@ -51,6 +52,11 @@ from classmate.services.records import (
 
 router = Router(name="classmate_wizards")
 WEEKDAYS = ["شنبه", "یکشنبه", "دوشنبه", "سه‌شنبه", "چهارشنبه", "پنجشنبه", "جمعه"]
+
+
+def _wizard_input_markup(chat_id: int, user_id: int):
+    """Private chats use the persistent reply back button; groups use owner-bound inline cancel."""
+    return wizard_inline_cancel_keyboard(user_id) if chat_id != user_id else None
 
 
 async def _start_wizard(
@@ -87,7 +93,11 @@ async def _start_wizard(
         )
         return
     await state.clear()
-    await state.update_data(record_type=kind, source_chat_id=chat_id)
+    await state.update_data(
+        record_type=kind,
+        source_chat_id=chat_id,
+        wizard_owner_id=from_user.id,
+    )
     if chat_id == from_user.id:
         await bot.send_message(
             chat_id,
@@ -98,7 +108,14 @@ async def _start_wizard(
         await _choose_class_for_wizard(classes[0].id, chat_id, state, bot)
     else:
         await state.set_state(RecordWizard.choose_class)
-        await bot.send_message(chat_id, "کدام کلاس؟", reply_markup=class_picker(classes))
+        await bot.send_message(
+            chat_id,
+            "کدام کلاس؟",
+            reply_markup=class_picker(
+                classes,
+                cancel_user_id=from_user.id if chat_id != from_user.id else None,
+            ),
+        )
 
 
 async def _choose_class_for_wizard(
@@ -114,11 +131,14 @@ async def _choose_class_for_wizard(
         return
     await state.update_data(class_id=class_id, timezone=context[2].timezone)
     data = await state.get_data()
+    owner_id = int(data.get("wizard_owner_id") or 0)
+    prompt_markup = _wizard_input_markup(chat_id, owner_id) if owner_id else None
     if data["record_type"] == "report":
         await state.set_state(RecordWizard.report_date)
         await bot.send_message(
             chat_id,
-            "تاریخ گزارش را وارد کن؛ نمونه: ۱۴۰۵/۰۸/۲۷\nبرای گزارش امروز، «امروز» بنویس."
+            "تاریخ گزارش را وارد کن؛ نمونه: ۱۴۰۵/۰۸/۲۷\nبرای گزارش امروز، «امروز» بنویس.",
+            reply_markup=prompt_markup,
         )
     else:
         if not subjects:
@@ -136,7 +156,14 @@ async def _choose_class_for_wizard(
             await state.clear()
             return
         await state.set_state(RecordWizard.choose_subject)
-        await bot.send_message(chat_id, "درس موردنظر را انتخاب کن:", reply_markup=subject_picker(subjects))
+        await bot.send_message(
+            chat_id,
+            "درس موردنظر را انتخاب کن:",
+            reply_markup=subject_picker(
+                subjects,
+                cancel_user_id=owner_id if chat_id != owner_id else None,
+            ),
+        )
 
 
 @router.callback_query(F.data.startswith("new:"))
@@ -226,7 +253,10 @@ async def wizard_subject_callback(callback: CallbackQuery, state: FSMContext):
     else:
         await state.set_state(RecordWizard.exam_title)
         prompt = "عنوان امتحان را وارد کن:"
-    await callback.message.answer(prompt)
+    await callback.message.answer(
+        prompt,
+        reply_markup=_wizard_input_markup(callback.message.chat.id, callback.from_user.id),
+    )
     await callback.answer()
 
 
@@ -295,6 +325,33 @@ async def _submit_pending(
     await _pending_message(
         bot, class_snapshot, entity_type, record_id, title, details, creator_name
     )
+
+
+@router.callback_query(F.data.startswith("wizard:cancel:"))
+async def wizard_inline_cancel(callback: CallbackQuery, state: FSMContext):
+    try:
+        owner_id = int(callback.data.rsplit(":", 1)[1])
+    except (AttributeError, TypeError, ValueError):
+        await callback.answer("درخواست لغو نامعتبر است.", show_alert=True)
+        return
+    if callback.from_user.id != owner_id:
+        await callback.answer("این دکمه متعلق به فردی است که فرایند را آغاز کرده.", show_alert=True)
+        return
+    if await state.get_state() is None:
+        await callback.answer("این فرایند قبلاً پایان یافته است.", show_alert=True)
+        return
+    await state.clear()
+    try:
+        await callback.message.edit_text(
+            "فرایند ثبت توسط شما لغو شد. برای نمایش دوباره منوی کلاس، /start را بزن.",
+            reply_markup=None,
+        )
+    except TelegramBadRequest:
+        try:
+            await callback.message.edit_reply_markup(reply_markup=None)
+        except TelegramBadRequest:
+            pass
+    await callback.answer("فرایند ثبت لغو شد.")
 
 
 @router.message(StateFilter(RecordWizard), F.text == "⬅️ بازگشت")
