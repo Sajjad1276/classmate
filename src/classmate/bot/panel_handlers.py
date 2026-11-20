@@ -594,14 +594,14 @@ async def _show_action(
         await _show_management_from_message(message, state, bot, class_id, tg_user)
         return
     elif action == "ask":
-        await state.set_state(PanelInput.input)
-        await state.update_data(panel_form="search", panel_class_id=class_id)
-        await _render_from_message(
+        await _start_panel_input_from_message(
             message,
             state,
             bot,
-            "🔎 پرسشت را درباره تکلیف یا امتحان بنویس. جست‌وجو بر اساس اطلاعات تأییدشده است.",
-            _markup([], "ui:cancel_input"),
+            form_name="search",
+            prompt="🔎 پرسشت را درباره تکلیف یا امتحان بنویس. جست‌وجو بر اساس اطلاعات تأییدشده است.",
+            class_id=class_id,
+            parent_kind="class_panel",
         )
         return
     else:
@@ -1040,19 +1040,28 @@ async def _show_form(
     if form_name == "class_code":
         await _create_class_codes(callback, state, class_id or 0)
         return
-    await state.set_state(PanelInput.input)
-    await state.update_data(
-        panel_form=form_name,
-        panel_class_id=class_id,
-        panel_school_id=school_id,
-        **({"school_name": None} if form_name == "school_new" else {}),
+    parent_kind = (
+        "classes_menu" if form_name == "join"
+        else "class_panel" if form_name == "search"
+        else "class_manage" if class_id is not None
+        else "school_manage" if school_id is not None
+        else "platform" if form_name in {"school_new", "school_admin_add"}
+        else "management_menu"
     )
-    await _render_from_callback(
-        callback,
+    await _start_panel_input_from_message(
+        callback.message,
         state,
-        f"📝 <b>اطلاعات موردنیاز</b>\n{prompts[form_name]}",
-        _markup([], "ui:cancel_input"),
+        callback.bot,
+        form_name=form_name,
+        prompt=f"📝 <b>اطلاعات موردنیاز</b>\n{prompts[form_name]}",
+        class_id=class_id,
+        school_id=school_id,
+        parent_kind=parent_kind,
+        parent_message_id=callback.message.message_id,
     )
+    if form_name == "school_new":
+        await state.update_data(school_name=None)
+    await callback.answer()
 
 
 def _parent_for_form(
@@ -1409,14 +1418,17 @@ async def class_action(callback: CallbackQuery, state: FSMContext, bot: Bot):
         await _show_management_from_message(callback.message, state, bot, class_id, callback.from_user)
         return
     if action == "ask":
-        await state.set_state(PanelInput.input)
-        await state.update_data(panel_form="search", panel_class_id=class_id)
-        await _render_from_callback(
-            callback,
+        await _start_panel_input_from_message(
+            callback.message,
             state,
-            "🔎 پرسشت را درباره تکلیف یا امتحان بنویس. فقط اطلاعات تأییدشده جست‌وجو می‌شود.",
-            _markup([], f"ui:class:{class_id}"),
+            bot,
+            form_name="search",
+            prompt="🔎 پرسشت را درباره تکلیف یا امتحان بنویس. فقط اطلاعات تأییدشده جست‌وجو می‌شود.",
+            class_id=class_id,
+            parent_kind="class_panel",
+            parent_message_id=callback.message.message_id,
         )
+        await callback.answer()
         return
     # Render views through a lightweight message adapter so there is one panel message.
     await callback.answer()
