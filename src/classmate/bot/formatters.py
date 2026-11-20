@@ -48,12 +48,12 @@ def _format_homework(rows) -> str:
         if homework.description and len(homework.description) > 140:
             description += "…"
         lines.append(
-            f"\\n• <b>{subject_name}</b> — {title}\\n"
-            f"  {escape(description)}\\n  موعد: {due}"
+            f"\n• <b>{subject_name}</b> — {title}\n"
+            f"  {escape(description)}\n  موعد: {due}"
         )
     if omitted:
-        lines.append(f"\\nℹ️ {omitted} تکلیف دیگر نمایش داده نشد.")
-    return "\\n".join(lines)
+        lines.append(f"\nℹ️ {omitted} تکلیف دیگر نمایش داده نشد.")
+    return "\n".join(lines)
 
 
 def _format_exams(rows, timezone_name: str) -> str:
@@ -69,10 +69,10 @@ def _format_exams(rows, timezone_name: str) -> str:
         if exam.scope and len(exam.scope) > 100:
             scope += "…"
         lines.append(
-            f"\\n• <b>{subject_name}</b> — {title}\\n"
-            f"  محدوده: {escape(scope)}\\n"
+            f"\n• <b>{subject_name}</b> — {title}\n"
+            f"  محدوده: {escape(scope)}\n"
             f"  زمان: {jalali_datetime(exam.scheduled_at, timezone_name)}"
         )
     if omitted:
-        lines.append(f"\\nℹ️ {omitted} امتحان دیگر نمایش داده نشد.")
-    return "\\n".join(lines)
+        lines.append(f"\nℹ️ {omitted} امتحان دیگر نمایش داده نشد.")
+    return "\n".join(lines)
