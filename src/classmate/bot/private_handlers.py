@@ -6,7 +6,7 @@ from aiogram.filters import Command
 from aiogram.types import Message
 from sqlalchemy import select
 
-from classmate.bot.handlers import _user, _ensure_group_member
+from classmate.bot.context import _user, _ensure_group_member
 from classmate.bot.keyboards import main_menu
 from classmate.db.models import ClassGroup
 from classmate.db.session import SessionFactory
