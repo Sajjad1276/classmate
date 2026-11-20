@@ -276,3 +276,20 @@ async def test_cancelling_approved_daily_report_persists_cancelled_at(db_session
     assert success
     assert report.status == RecordStatus.CANCELLED
     assert report.cancelled_at is not None
+
+
+@pytest.mark.asyncio
+async def test_multiple_daily_reports_can_be_submitted_for_one_class_date(db_session):
+    school, class_group, creator, approver, subject = await _seed_class(db_session)
+    report_day = date.today()
+    first = await create_daily_report(
+        db_session, class_group.id, report_day, "گزارش زنگ اول", creator.id, "گزارش اول"
+    )
+    second = await create_daily_report(
+        db_session, class_group.id, report_day, "گزارش زنگ دوم", approver.id, "گزارش دوم"
+    )
+    first.status = RecordStatus.APPROVED
+    second.status = RecordStatus.APPROVED
+    results = await list_reports(db_session, class_group.id, report_day)
+    assert {item.id for item in results} == {first.id, second.id}
+    assert {item.body for item in results} == {"گزارش زنگ اول", "گزارش زنگ دوم"}
