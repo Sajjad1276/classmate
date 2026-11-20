@@ -485,7 +485,10 @@ async def wizard_homework_due(message: Message, state: FSMContext, bot: Bot):
 async def wizard_exam_title(message: Message, state: FSMContext):
     title = (message.text or "").strip()
     if not title or len(title) > 180:
-        await message.answer("عنوان باید بین ۱ تا ۱۸۰ نویسه باشد.")
+        await message.answer(
+            "عنوان باید بین ۱ تا ۱۸۰ نویسه باشد.",
+            reply_markup=_wizard_input_markup(message.chat.id, message.from_user.id),
+        )
         return
     await state.update_data(title=title)
     await state.set_state(RecordWizard.exam_scope)
@@ -520,7 +523,10 @@ async def wizard_exam_datetime(message: Message, state: FSMContext, bot: Bot):
         if scheduled_at <= __import__("datetime").datetime.now(ZoneInfo(data["timezone"])):
             raise ValueError("زمان امتحان باید در آینده باشد.")
     except ValueError as exc:
-        await message.answer(str(exc))
+        await message.answer(
+            str(exc),
+            reply_markup=_wizard_input_markup(message.chat.id, message.from_user.id),
+        )
         return
     title, scope, subject_id = data["title"], data["scope"], data["subject_id"]
 
@@ -547,7 +553,10 @@ async def wizard_report_date(message: Message, state: FSMContext):
         try:
             report_date = parse_school_date(raw)
         except ValueError as exc:
-            await message.answer(str(exc))
+            await message.answer(
+                str(exc),
+                reply_markup=_wizard_input_markup(message.chat.id, message.from_user.id),
+            )
             return
     await state.update_data(report_date=report_date.isoformat())
     await state.set_state(RecordWizard.report_body)
