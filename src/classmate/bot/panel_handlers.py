@@ -1322,6 +1322,80 @@ async def school_group_reset_do(callback: CallbackQuery, state: FSMContext):
     await _issue_school_group_link(callback, state, school_id, replace_existing=True)
 
 
+@router.callback_query(F.data.startswith("ui:school_classes:"))
+async def school_class_manager_selector(callback: CallbackQuery, state: FSMContext):
+    try:
+        school_id = int(callback.data.rsplit(":", 1)[1])
+        if school_id < 1:
+            raise ValueError
+    except (TypeError, ValueError):
+        await callback.answer("شناسه مدرسه نامعتبر است.", show_alert=True)
+        return
+    async with SessionFactory() as session:
+        async with session.begin():
+            actor = await _user(session, callback.from_user, private=True)
+            school = await session.get(School, school_id)
+            if not school or not school.is_active or not await is_school_admin(session, actor, school_id):
+                await callback.answer("به مدیریت این مدرسه دسترسی نداری.", show_alert=True)
+                return
+            classes = (
+                await session.scalars(
+                    select(ClassGroup)
+                    .join(AcademicYear, ClassGroup.academic_year_id == AcademicYear.id)
+                    .where(
+                        AcademicYear.school_id == school_id,
+                        ClassGroup.is_active.is_(True),
+                    )
+                    .order_by(AcademicYear.name.desc(), ClassGroup.name)
+                )
+            ).all()
+    rows = [
+        [_button(f"👤 {item.name[:36]} · {item.grade[:12]}", f"ui:form:class_manager_add:{item.id}")]
+        for item in classes
+    ]
+    body = (
+        "کلاسی را برای تعیین مدیر انتخاب کن:"
+        if rows
+        else "هنوز کلاسی در این مدرسه ثبت نشده است."
+    )
+    await _render_from_callback(callback, state, body, _markup(rows, f"ui:school_manage:{school_id}"))
+
+
+@router.callback_query(F.data.startswith("ui:school_classes_view:"))
+async def school_classes_view(callback: CallbackQuery, state: FSMContext):
+    try:
+        school_id = int(callback.data.rsplit(":", 1)[1])
+        if school_id < 1:
+            raise ValueError
+    except (TypeError, ValueError):
+        await callback.answer("شناسه مدرسه نامعتبر است.", show_alert=True)
+        return
+    async with SessionFactory() as session:
+        async with session.begin():
+            actor = await _user(session, callback.from_user, private=True)
+            school = await session.get(School, school_id)
+            if not school or not school.is_active or not await is_school_admin(session, actor, school_id):
+                await callback.answer("به مدیریت این مدرسه دسترسی نداری.", show_alert=True)
+                return
+            classes = (
+                await session.scalars(
+                    select(ClassGroup)
+                    .join(AcademicYear, ClassGroup.academic_year_id == AcademicYear.id)
+                    .where(
+                        AcademicYear.school_id == school_id,
+                        ClassGroup.is_active.is_(True),
+                    )
+                    .order_by(AcademicYear.name.desc(), ClassGroup.name)
+                )
+            ).all()
+    rows = [
+        [_button(f"🏫 {item.name[:36]} · {item.grade[:12]}", f"ui:class:{item.id}")]
+        for item in classes
+    ]
+    body = "📚 کلاس‌های این مدرسه:" if rows else "برای این مدرسه هنوز کلاسی ثبت نشده است."
+    await _render_from_callback(callback, state, body, _markup(rows, f"ui:school_manage:{school_id}"))
+
+
 @router.callback_query(F.data.startswith("ui:form:"))
 async def form_panel(callback: CallbackQuery, state: FSMContext):
     try:
