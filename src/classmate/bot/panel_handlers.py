@@ -311,8 +311,8 @@ async def _show_classes(
         await _render_from_callback(
             callback,
             state,
-            "🏫 هنوز کلاسی به حساب تو متصل نشده است. از مدیر کلاس کد دعوت بگیر و در بخش عضویت وارد کن.",
-            _markup([], back),
+            "🏫 هنوز عضو کلاسی نیستی. با کد دعوت به کلاس بپیوند.",
+            _markup([[_button("🔑 عضویت در کلاس", "ui:form:join")]], back),
         )
         return
     rows = [
