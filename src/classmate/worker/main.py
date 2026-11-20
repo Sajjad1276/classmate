@@ -10,7 +10,7 @@ from sqlalchemy import select
 
 from classmate.core.config import get_settings
 from classmate.core.logging import configure_logging
-from classmate.db.models import ReminderJob
+from classmate.db.models import DailyReport, Exam, Homework, ReminderJob
 from classmate.domain.enums import ReminderStatus
 from classmate.db.session import SessionFactory, dispose_engine
 from classmate.worker.wait_for_schema import wait_for_schema
@@ -68,6 +68,32 @@ async def claim_due_job() -> ReminderJobSnapshot | None:
             return ReminderJobSnapshot(job.id, job.target_id, job.message_text, job.attempts)
 
 
+async def job_is_still_sendable(job_id: int) -> bool:
+    """Re-check cancellation and source-record status immediately before Telegram send."""
+    async with SessionFactory() as session:
+        async with session.begin():
+            job = await session.get(ReminderJob, job_id, with_for_update=True)
+            if job is None or job.status != ReminderStatus.PROCESSING:
+                return False
+            model = {
+                "homework": Homework,
+                "exam": Exam,
+                "report": DailyReport,
+            }.get(job.entity_type)
+            if model is None:
+                job.status = ReminderStatus.CANCELLED
+                job.locked_at = None
+                job.last_error = "Reminder source type is no longer supported."
+                return False
+            record = await session.get(model, job.entity_id)
+            if record is None or record.status != "APPROVED":
+                job.status = ReminderStatus.CANCELLED
+                job.locked_at = None
+                job.last_error = "Source record is missing or no longer approved."
+                return False
+            return True
+
+
 async def finish_job(
     job_id: int,
     error: str | None = None,
@@ -80,6 +106,9 @@ async def finish_job(
         async with session.begin():
             job = await session.get(ReminderJob, job_id, with_for_update=True)
             if job is None:
+                return
+            if job.status == ReminderStatus.CANCELLED:
+                # A source record can be cancelled while the worker is between claim and send.
                 return
             job.locked_at = None
             if error is None:
@@ -124,6 +153,9 @@ async def run_worker() -> None:
                 await asyncio.sleep(max(1, settings.reminder_poll_seconds))
                 continue
             try:
+                if not await job_is_still_sendable(job.id):
+                    logger.info("Reminder job %s was cancelled before delivery", job.id)
+                    continue
                 await bot.send_message(job.target_id, job.message_text)
                 await finish_job(job.id)
                 logger.info("Reminder job %s delivered", job.id)
