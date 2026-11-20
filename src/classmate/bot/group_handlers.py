@@ -99,20 +99,20 @@ async def connect_group(message: Message, bot: Bot):
         await message.answer("قالب: /connect کد_اتصال")
         return
     try:
-        member = await bot.get_chat_member(message.chat.id, message.from_user.id)
-        if member.status not in {"administrator", "creator"}:
-            await message.answer("فقط مدیر گروه می‌تواند اتصال را انجام دهد.")
-            return
-    except Exception:
-        await message.answer("امکان بررسی دسترسی مدیر گروه وجود ندارد. دوباره تلاش کن.")
-        return
-    try:
         bot_member = await bot.get_chat_member(message.chat.id, bot.id)
         if bot_member.status not in {"administrator", "creator"}:
             await message.answer("برای اتصال کلاس، ابتدا ربات را مدیر همین گروه کن و سپس دوباره تلاش کن.")
             return
     except Exception:
         await message.answer("وضعیت مدیریتی ربات در این گروه قابل بررسی نیست. ابتدا ربات را مدیر کن.")
+        return
+    try:
+        member = await bot.get_chat_member(message.chat.id, message.from_user.id)
+        if member.status not in {"administrator", "creator"}:
+            await message.answer("فقط مدیر گروه می‌تواند اتصال را انجام دهد.")
+            return
+    except Exception:
+        await message.answer("امکان بررسی دسترسی مدیر گروه وجود ندارد. دوباره تلاش کن.")
         return
 
     async with SessionFactory() as session:
