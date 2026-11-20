@@ -457,10 +457,13 @@ async def handle_panel_input(
         )
     except (ValueError, PermissionError, TypeError, KeyError) as exc:
         await state.set_state(PanelInput.input)
-        await bot.send_message(
-            message.chat.id,
-            f"⚠️ {escape(str(exc))}\n\nاطلاعات را دوباره بررسی و وارد کن.",
-        )
+        if form_name == "join":
+            await _send_join_retry_message(bot, message.chat.id, exc)
+        else:
+            await bot.send_message(
+                message.chat.id,
+                f"⚠️ {escape(str(exc))}\n\nاطلاعات را دوباره بررسی و وارد کن.",
+            )
 
 
 async def handle_search_input(
