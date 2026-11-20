@@ -505,6 +505,32 @@ async def list_reports(session: AsyncSession, class_id: int, report_date: date):
     )
 
 
+async def list_cancelable_records(
+    session: AsyncSession, class_id: int, *, per_type_limit: int = 10, total_limit: int = 12
+) -> list[tuple[str, Homework | Exam | DailyReport]]:
+    """Return the most recent approved records that an authorized approver may cancel."""
+    results: list[tuple[str, Homework | Exam | DailyReport]] = []
+    for entity_type, model in (
+        ("homework", Homework),
+        ("exam", Exam),
+        ("report", DailyReport),
+    ):
+        records = (
+            await session.scalars(
+                select(model)
+                .where(
+                    model.class_id == class_id,
+                    model.status == RecordStatus.APPROVED,
+                )
+                .order_by(model.created_at.desc(), model.id.desc())
+                .limit(per_type_limit)
+            )
+        ).all()
+        results.extend((entity_type, record) for record in records)
+    results.sort(key=lambda item: (item[1].created_at, item[1].id), reverse=True)
+    return results[:total_limit]
+
+
 async def list_pending_records(session: AsyncSession, class_id: int):
     pending = []
     for label, model in (("homework", Homework), ("exam", Exam), ("report", DailyReport)):
