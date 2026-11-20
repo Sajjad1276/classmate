@@ -51,6 +51,6 @@ The resolver reads the class timetable for a subject, respects weekday/time and 
 
 ## Group experience and limitations
 
-Group binding and command-based class operations are implemented. A dedicated inline group dashboard, broadcast/announcement tooling and arbitrary-message ingestion are not implemented. Keep Telegram Privacy Mode enabled. The /today view shows approved reports, not a full dashboard combining periods, homework and exams.
+Group binding and the inline class-group dashboard are implemented. The dashboard exposes approved homework/exams, the currently valid timetable, a bounded summary for today and submission entry points; approver-only review is authorized again at callback execution. Broadcast/announcement tooling and arbitrary-message ingestion are not implemented. Keep Telegram Privacy Mode enabled.
 
 A web dashboard, revision/expiry workflows, attendance, grades, payments, SIS integrations, holiday calendars and advanced analytics remain out of scope for the current MVP.
