@@ -61,18 +61,6 @@ from classmate.services.records import (
 
 router = Router(name="classmate")
 logger = logging.getLogger(__name__)
-from classmate.bot.context import (
-    WEEKDAYS,
-    _class_from_message,
-    _classes_for_user,
-    _ensure_group_member,
-    _main_keyboard_for_user,
-    _parse_pipe_args,
-    _subject_list,
-    _user,
-)
-
-
 @router.message(CommandStart())
 async def start(message: Message, state: FSMContext, bot: Bot):
     if message.chat.type == "private":
