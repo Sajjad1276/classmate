@@ -232,11 +232,11 @@ async def group_menu_action(callback: CallbackQuery):
                     answer = "برنامه هفتگی معتبر هنوز برای این کلاس ثبت نشده است."
                 else:
                     rows = ["📅 <b>برنامه هفتگی معتبر</b>"]
-                    for entry, subject in entries[:35]:
+                    for entry, subject in entries[:18]:
                         start = f" ({entry.starts_at.strftime('%H:%M')})" if entry.starts_at else ""
                         rows.append(
                             f"• {WEEKDAYS[entry.weekday]} — زنگ {entry.period}{start}: "
-                            f"{escape(subject.name)}"
+                            f"{escape(subject.name[:60])}"
                         )
                     answer = "\n".join(rows)
             elif action == "today":
@@ -274,8 +274,6 @@ async def group_menu_action(callback: CallbackQuery):
                 else:
                     rows.append("📝 امروز امتحانی ثبت نشده است.")
                 answer = "\n\n".join(rows)
-                if len(answer.encode("utf-16-le")) // 2 > 3900:
-                    answer = answer[:3500] + "\n\n<i>خلاصه برای محدودیت طول پیام کوتاه شد.</i>"
             else:
                 await callback.answer("این گزینه شناخته‌شده نیست.", show_alert=True)
                 return
