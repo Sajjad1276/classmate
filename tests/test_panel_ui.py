@@ -10,7 +10,10 @@ from classmate.bot.keyboards import (
     wizard_inline_cancel_keyboard,
 )
 from classmate.bot.group_handlers import router as group_router
-from classmate.bot.wizard_handlers import router as wizard_router
+from classmate.bot.wizard_handlers import (
+    router as wizard_router,
+    wizard_inline_cancel,
+)
 from classmate.bot.panel_form_processing import _send_join_retry_message
 from classmate.bot.panel_handlers import (
     _academic_menu_markup,
@@ -223,6 +226,26 @@ def test_panel_router_registers_school_class_selectors():
     assert "management_menu_callback" in callback_names
     assert "home_academic_action" in callback_names
     assert "management_action" in callback_names
+
+
+async def test_group_wizard_cancel_cannot_be_triggered_by_another_member():
+    callback = SimpleNamespace(
+        data="wizard:cancel:123456",
+        from_user=SimpleNamespace(id=654321),
+        answer=AsyncMock(),
+    )
+    state = SimpleNamespace(
+        get_state=AsyncMock(return_value="RecordWizard:homework_title"),
+        clear=AsyncMock(),
+    )
+
+    await wizard_inline_cancel(callback, state)
+
+    callback.answer.assert_awaited_once_with(
+        "این دکمه متعلق به فردی است که فرایند را آغاز کرده.",
+        show_alert=True,
+    )
+    state.clear.assert_not_awaited()
 
 
 def test_record_wizard_has_a_back_handler_for_every_input_state():
