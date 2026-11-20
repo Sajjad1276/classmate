@@ -44,6 +44,7 @@ from classmate.services.permissions import (
     hash_code,
     user_can_access_class,
 )
+from classmate.services.notifications import update_user_reminder_preference
 from classmate.services.records import (
     approve_record,
     list_exams,
@@ -913,8 +914,14 @@ async def class_action(callback: CallbackQuery, state: FSMContext, bot: Bot):
 
 @router.callback_query(F.data.startswith("ui:reminder_toggle:"))
 async def reminder_toggle(callback: CallbackQuery, state: FSMContext, bot: Bot):
-    _, _, class_id_raw, category, setting = callback.data.split(":")
-    class_id = int(class_id_raw)
+    try:
+        _, _, class_id_raw, category, setting = callback.data.split(":")
+        class_id = int(class_id_raw)
+        if class_id < 1 or category not in {"homework", "exams"} or setting not in {"off", "on"}:
+            raise ValueError
+    except (AttributeError, TypeError, ValueError):
+        await callback.answer("درخواست تنظیم یادآوری نامعتبر است.", show_alert=True)
+        return
     context = await _class_context(class_id, callback.from_user)
     if not context:
         await callback.answer("به این کلاس دسترسی نداری.", show_alert=True)
@@ -922,22 +929,19 @@ async def reminder_toggle(callback: CallbackQuery, state: FSMContext, bot: Bot):
     async with SessionFactory() as session:
         async with session.begin():
             user = await _user(session, callback.from_user, private=True)
-            preference = await session.scalar(
-                select(NotificationPreference).where(
-                    NotificationPreference.user_id == user.id,
-                    NotificationPreference.class_id == class_id,
-                )
+            class_context = await get_class_with_school(session, class_id)
+            if not class_context:
+                await callback.answer("کلاس فعال پیدا نشد.", show_alert=True)
+                return
+            class_group, _, school = class_context
+            created, cancelled = await update_user_reminder_preference(
+                session, user, class_group, school.timezone, category, setting == "on"
             )
-            if preference is None:
-                preference = NotificationPreference(user_id=user.id, class_id=class_id)
-                session.add(preference)
-            enabled = setting == "on"
-            if category == "homework":
-                preference.homework_enabled = enabled
-            elif category == "exams":
-                preference.exams_enabled = enabled
-    await callback.answer("تنظیم یادآوری ذخیره شد.")
-    # Re-render using a private Message action and the same panel message ID.
+    if setting == "on":
+        response = f"یادآوری فعال شد؛ {created} یادآوری آینده در صف قرار گرفت یا بازیابی شد."
+    else:
+        response = f"یادآوری خاموش شد؛ {cancelled} یادآوری خصوصی لغو شد."
+    await callback.answer(response)
     await _show_action(callback.message, state, bot, callback.from_user, "reminders", class_id)
 
 
