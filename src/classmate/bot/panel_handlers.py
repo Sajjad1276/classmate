@@ -28,6 +28,8 @@ from classmate.bot.keyboards import main_reply_keyboard
 from classmate.bot.states import PanelInput
 from classmate.domain.enums import ENTITY_LABELS, EntityType, Role
 from classmate.db.models import (
+    AcademicYear,
+    ClassGroup,
     ClassMembership,
     NotificationPreference,
     School,
@@ -702,10 +704,10 @@ async def _show_school_management(
         group_action = _button("🔗 ساخت لینک اتصال گروه", f"ui:school_group_link:{school_id}")
     rows = [
         [group_action],
-        [_button("📅 ایجاد سال تحصیلی", "ui:form:year_new")],
-        [_button("🏫 ایجاد کلاس", "ui:form:class_new")],
-        [_button("👤 تعیین مدیر کلاس", "ui:form:class_manager_add")],
-        [_button("📚 مشاهده کلاس‌های قابل‌دسترسی", "ui:classes")],
+        [_button("📅 ایجاد سال تحصیلی", f"ui:form:year_new:{school_id}")],
+        [_button("🏫 ایجاد کلاس", f"ui:form:class_new:{school_id}")],
+        [_button("👤 تعیین مدیر کلاس", f"ui:school_classes:{school_id}")],
+        [_button("📚 مشاهده کلاس‌های این مدرسه", f"ui:school_classes_view:{school_id}")],
     ]
     await _render_from_callback(
         callback,
@@ -720,15 +722,16 @@ async def _show_form(
     state: FSMContext,
     form_name: str,
     class_id: int | None = None,
+    school_id: int | None = None,
 ) -> None:
     user, roles = await _current_user(callback)
     prompts = {
         "join": "کد دعوت کلاس را وارد کن.",
         "school_new": "نام مدرسه را وارد کن.",
         "school_admin_add": "شناسه مدرسه | شناسه عددی تلگرام کاربر",
-        "year_new": "شناسه مدرسه | نام سال تحصیلی\nنمونه: 1 | ۱۴۰۶-۱۴۰۷",
-        "class_new": "شناسه مدرسه | پایه | شعبه | نام کلاس\nبرای نداشتن شعبه، - وارد کن.",
-        "class_manager_add": "شناسه کلاس | شناسه عددی تلگرام مدیر جدید",
+        "year_new": "نام سال تحصیلی جدید را وارد کن.\nمثال: ۱۴۰۶-۱۴۰۷",
+        "class_new": "پایه | شعبه | نام کلاس\nبرای نداشتن شعبه، - وارد کن.\nنمونه: دهم | الف | دهم تجربی ۱",
+        "class_manager_add": "شناسه عددی تلگرام مدیر جدید را وارد کن.",
         "class_code": "کدهای جدید برای کلاس انتخاب‌شده ساخته می‌شود.",
         "approver_add": "شناسه عددی تلگرام فرد مورد اعتماد را وارد کن.",
         "subject_add": "نام درس را وارد کن.",
@@ -742,10 +745,24 @@ async def _show_form(
         "join": True,
         "school_new": roles["platform"],
         "school_admin_add": roles["platform"],
-        "year_new": roles["school"],
-        "class_new": roles["school"],
-        "class_manager_add": roles["school"],
+        "year_new": False,
+        "class_new": False,
+        "class_manager_add": False,
     }
+    if form_name in {"year_new", "class_new"}:
+        async with SessionFactory() as session:
+            async with session.begin():
+                actor = await _user(session, callback.from_user, private=True)
+                permitted[form_name] = bool(
+                    school_id is not None
+                    and await is_school_admin(session, actor, school_id)
+                )
+    if form_name == "class_manager_add":
+        context = await _class_context(class_id or 0, callback.from_user)
+        if not context:
+            await callback.answer("کلاس انتخاب‌شده پیدا نشد یا دسترسی نداری.", show_alert=True)
+            return
+        permitted[form_name] = context["is_school_admin"] or context["is_platform_admin"]
     if form_name in {"class_code", "approver_add", "subject_add", "timetable_set"}:
         context = await _class_context(class_id or 0, callback.from_user)
         if not context:
@@ -767,6 +784,7 @@ async def _show_form(
     await state.update_data(
         panel_form=form_name,
         panel_class_id=class_id,
+        panel_school_id=school_id,
         **({"school_name": None} if form_name == "school_new" else {}),
     )
     await _render_from_callback(
@@ -777,13 +795,17 @@ async def _show_form(
     )
 
 
-def _parent_for_form(form_name: str, class_id: int | None) -> str:
+def _parent_for_form(
+    form_name: str, class_id: int | None, school_id: int | None = None
+) -> str:
     if form_name == "join":
         return "ui:close"
     if form_name == "search" and class_id is not None:
         return f"ui:class:{class_id}"
     if class_id is not None:
         return f"ui:manage:{class_id}"
+    if school_id is not None:
+        return f"ui:school_manage:{school_id}"
     if form_name in {"school_new", "school_admin_add"}:
         return "ui:platform"
     return "ui:school"
@@ -1302,10 +1324,22 @@ async def school_group_reset_do(callback: CallbackQuery, state: FSMContext):
 
 @router.callback_query(F.data.startswith("ui:form:"))
 async def form_panel(callback: CallbackQuery, state: FSMContext):
-    parts = callback.data.split(":")
-    form_name = parts[2]
-    class_id = int(parts[3]) if len(parts) > 3 else None
-    await _show_form(callback, state, form_name, class_id)
+    try:
+        parts = callback.data.split(":")
+        if len(parts) not in {3, 4}:
+            raise ValueError
+        form_name = parts[2]
+        context_id = int(parts[3]) if len(parts) == 4 else None
+        if context_id is not None and context_id < 1:
+            raise ValueError
+    except (IndexError, TypeError, ValueError):
+        await callback.answer("درخواست فرم نامعتبر است.", show_alert=True)
+        return
+    class_id = context_id if form_name in {
+        "class_code", "approver_add", "subject_add", "timetable_set", "class_manager_add"
+    } else None
+    school_id = context_id if form_name in {"year_new", "class_new"} else None
+    await _show_form(callback, state, form_name, class_id, school_id)
 
 
 @router.callback_query(F.data == "ui:cancel_input")
@@ -1313,12 +1347,14 @@ async def cancel_input(callback: CallbackQuery, state: FSMContext):
     data = await state.get_data()
     form_name = data.get("panel_form")
     class_id = data.get("panel_class_id")
+    school_id = data.get("panel_school_id")
     await state.set_state(None)
     await state.update_data(
         panel_form=None,
+        panel_school_id=None,
         **({"school_name": None} if form_name == "school_new" else {}),
     )
-    parent = _parent_for_form(form_name or "", class_id)
+    parent = _parent_for_form(form_name or "", class_id, school_id)
     await callback.answer("عملیات لغو شد.")
     if parent == "ui:platform":
         await _show_platform_panel(callback, state)
@@ -1330,6 +1366,8 @@ async def cancel_input(callback: CallbackQuery, state: FSMContext):
         await _show_class_panel(callback, state, int(parent.rsplit(":", 1)[1]))
     elif class_id:
         await _show_management_from_message(callback.message, state, callback.bot, class_id, callback.from_user)
+    elif school_id:
+        await _show_school_management(callback, state, int(school_id))
     else:
         await _close_panel(callback, state)
 
