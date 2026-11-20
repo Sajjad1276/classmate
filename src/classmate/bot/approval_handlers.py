@@ -6,7 +6,7 @@ from aiogram.filters import Command
 from aiogram.types import CallbackQuery, Message
 from sqlalchemy import select
 
-from classmate.bot.handlers import _class_from_message, _user
+from classmate.bot.context import _class_from_message, _user
 from classmate.bot.keyboards import approval_keyboard
 from classmate.db.models import ReminderJob
 from classmate.db.session import SessionFactory
