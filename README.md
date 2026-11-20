@@ -48,9 +48,14 @@ Private-chat actions are started from Telegram keyboard buttons and inline panel
 
 Opening an inner panel hides the persistent Reply Keyboard. One Back button closes the current panel and returns to its parent (or restores the main keyboard at the root). School creation asks only for school name and academic year; it then provides a one-time group-add link. Hiding a button is only a UI convenience; each operation independently verifies authorization.
 
-## Group interface status
+## Telegram group support
 
-The private interface is button-driven, and each school can now be linked to one central Telegram group through Telegram's startgroup deep link. Group-side menus, school notifications, class-specific group workflows and group moderation are the next implementation phase. Keep Telegram Privacy Mode enabled; the bot does not read arbitrary group messages.
+- A school can be linked to one central group through Telegram's one-time startgroup link.
+- A class can be linked to its own group with /connect <code>; the code is one-time and expires after 30 minutes. The command checks that its issuer is a Telegram group administrator.
+- Linked groups support command-based class workflows, including approved homework/exam/report queries, weekly timetable, next-lesson search, submissions and review/cancellation by authorized roles.
+- A dedicated inline group dashboard and broadcast/announcement tools are not yet implemented.
+
+Keep Telegram Privacy Mode enabled. ClassMate does not ingest arbitrary group conversations; it handles addressed commands and supported bot interactions only.
 
 ## Security
 
@@ -70,4 +75,4 @@ The private interface is button-driven, and each school can now be linked to one
 
 ## Current MVP limitations
 
-The current `/today`-equivalent panel shows the approved daily report; it is not yet a complete daily dashboard combining periods, due homework and exams. The next-session resolver uses the next future weekday occurrence in the timetable (08:00 when a period has no start time); holidays and one-off timetable changes are not automatically inferred. Record revision UI, a web dashboard, attendance/grades, advanced analytics and richer notification schedules are follow-up tasks. FSM form state is in-memory, while submitted records and reminder jobs are durable in PostgreSQL.
+The current /today-equivalent view shows approved daily reports; it is not yet a complete dashboard combining periods, due homework and exams. Multiple reports may be submitted for one class/date. The next-session resolver uses the next future timetable occurrence (08:00 when a period has no start time); holidays and one-off timetable changes are not inferred. Record revision UI, a web dashboard, attendance/grades and advanced analytics remain follow-up work. FSM state, processed-update leases, records, audit history and reminder jobs are stored in PostgreSQL.
