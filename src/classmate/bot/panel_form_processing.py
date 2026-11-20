@@ -49,6 +49,27 @@ def _parse_persian_int(value: str) -> int:
     translated = value.translate(str.maketrans("۰۱۲۳۴۵۶۷۸۹", "0123456789"))
     return int(translated)
 
+
+async def _update_input_prompt(
+    message: Message, state: FSMContext, bot: Bot, text: str
+) -> None:
+    """Advance a valid form step without replacing the reply-keyboard back control."""
+    data = await state.get_data()
+    prompt_id = data.get("panel_message_id")
+    if prompt_id is not None:
+        try:
+            await bot.edit_message_text(
+                chat_id=message.chat.id,
+                message_id=prompt_id,
+                text=text,
+            )
+            return
+        except TelegramBadRequest:
+            pass
+    sent = await bot.send_message(message.chat.id, text)
+    await state.update_data(panel_message_id=sent.message_id)
+
+
 async def _send_join_retry_message(bot: Bot, chat_id: int, error: Exception) -> None:
     """Send join-code errors as a new message without replacing the original prompt."""
     await bot.send_message(
@@ -73,18 +94,15 @@ async def handle_panel_input(
     if form_name == "school_new" and not data.get("school_name"):
         if not raw or len(raw) > 180:
             await state.set_state(PanelInput.input)
-            await render_from_message(
-                message, state, bot,
-                "نام مدرسه باید بین ۱ تا ۱۸۰ نویسه باشد. دوباره وارد کن.",
-                markup([], "ui:cancel_input"),
+            await bot.send_message(
+                message.chat.id,
+                "⚠️ نام مدرسه باید بین ۱ تا ۱۸۰ نویسه باشد. دوباره وارد کن.",
             )
             return
         await state.update_data(school_name=raw)
         await state.set_state(PanelInput.input)
-        await render_from_message(
-            message, state, bot,
-            "سال تحصیلی را وارد کن.\nمثال: ۱۴۰۵-۱۴۰۶",
-            markup([], "ui:cancel_input"),
+        await _update_input_prompt(
+            message, state, bot, "سال تحصیلی را وارد کن.\nمثال: ۱۴۰۵-۱۴۰۶"
         )
         return
 
@@ -439,15 +457,9 @@ async def handle_panel_input(
         )
     except (ValueError, PermissionError, TypeError, KeyError) as exc:
         await state.set_state(PanelInput.input)
-        if form_name == "join":
-            await _send_join_retry_message(bot, message.chat.id, exc)
-            return
-        await render_from_message(
-            message,
-            state,
-            bot,
-            f"⚠️ {escape(str(exc))}\n\nاطلاعات را دوباره وارد کن یا با دکمه بازگشت خارج شو.",
-            markup([], "ui:cancel_input"),
+        await bot.send_message(
+            message.chat.id,
+            f"⚠️ {escape(str(exc))}\n\nاطلاعات را دوباره بررسی و وارد کن.",
         )
 
 
