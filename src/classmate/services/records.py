@@ -483,7 +483,7 @@ async def list_exams(session: AsyncSession, class_id: int) -> list[tuple[Exam, S
                     Subject.deleted_at.is_(None),
                 )
                 .order_by(Exam.scheduled_at.asc())
-                .limit(30)
+                .limit(31)
             )
         ).all()
     )
