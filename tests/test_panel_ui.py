@@ -1,4 +1,9 @@
-from classmate.bot.keyboards import main_reply_keyboard, wizard_cancel_keyboard
+from classmate.bot.keyboards import (
+    group_menu_keyboard,
+    main_reply_keyboard,
+    wizard_cancel_keyboard,
+)
+from classmate.bot.group_handlers import router as group_router
 from classmate.bot.panel_handlers import (
     _is_panel_input_text,
     _markup,
@@ -112,3 +117,28 @@ def test_panel_router_registers_school_class_selectors():
     }
     assert "school_class_manager_selector" in callback_names
     assert "school_classes_view" in callback_names
+
+
+def test_group_menu_exposes_records_but_review_is_role_gated():
+    regular = {
+        button.callback_data
+        for row in group_menu_keyboard(can_review=False).inline_keyboard
+        for button in row
+    }
+    approver = {
+        button.callback_data
+        for row in group_menu_keyboard(can_review=True).inline_keyboard
+        for button in row
+    }
+    assert {"group:homework", "group:exams", "group:week", "group:today"} <= regular
+    assert "group:pending" not in regular
+    assert "group:pending" in approver
+    assert {"new:homework", "new:exam", "new:report"} <= regular
+
+
+def test_group_router_registers_group_menu_callback():
+    callback_names = {
+        handler.callback.__name__
+        for handler in group_router.observers["callback_query"].handlers
+    }
+    assert "group_menu_action" in callback_names
