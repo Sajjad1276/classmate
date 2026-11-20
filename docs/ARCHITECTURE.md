@@ -32,7 +32,7 @@ The initial migration bootstraps metadata; future migrations should be generated
 
 ## Telegram update processing
 
-The bot uses long polling and Telegram Privacy Mode remains enabled. During group binding, the bot must be a Telegram administrator so it can reliably verify that the command issuer is a group administrator; it does not require message deletion or member-ban privileges. Group commands, mentions/replies to the bot and inline callbacks are supported; the bot does not ingest arbitrary private group conversations.
+The bot uses long polling and Telegram Privacy Mode remains enabled. For class-group binding, both the command issuer and the bot must be Telegram administrators. A shared PostgreSQL transaction-scoped advisory lock serializes class-group and school-group binding mutations, and each path checks the other tenant table before binding. Arbitrary message deletion or member-ban privileges are not required. Group commands, mentions/replies to the bot and inline callbacks are supported; the bot does not ingest arbitrary private group conversations.
 
 FSM state/data is persisted in PostgreSQL (fsm_state_records) and survives process restarts. A DB-backed update middleware claims Telegram update IDs using an expiring lease in processed_updates, preventing duplicate handling after redelivery. A PostgreSQL session-level advisory lock serializes long polling during rolling deployments; only the lock-owning connection may poll the production bot token.
 
@@ -48,8 +48,6 @@ Create one Railway project with:
 3. Reminder worker service from this repository, start command: python -m classmate.worker.main.
 
 Set BOT_TOKEN on both application services. Set DATABASE_URL on both to the PostgreSQL service reference variable. Run alembic upgrade head once as a controlled migration step before starting the bot/worker on a new environment. Do not make both services run migrations concurrently.
-
-No Railway resources are created and no deployment is performed by this repository change.
 
 
 ## Record and timetable invariants
