@@ -137,7 +137,7 @@ def _academic_menu_markup() -> InlineKeyboardMarkup:
 
 def _management_menu_markup(roles: dict[str, bool]) -> InlineKeyboardMarkup:
     rows = []
-    if roles["manager"]:
+    if roles["manager"] or roles["school"] or roles["platform"]:
         rows.append([_button("⚙️ مدیریت کلاس", "ui:manage_action:class")])
     if roles["school"]:
         rows.append([_button("🏢 مدیریت مدرسه", "ui:manage_action:school")])
@@ -792,7 +792,6 @@ async def _return_to_panel_parent(
     data: dict,
 ) -> None:
     prompt_id = data.get("panel_message_id")
-    parent_id = data.get("panel_parent_message_id")
     parent_kind = data.get("panel_parent_kind")
     class_id = data.get("panel_class_id")
     school_id = data.get("panel_school_id")
@@ -1333,7 +1332,7 @@ async def management_action(callback: CallbackQuery, state: FSMContext, bot: Bot
     action = callback.data.rsplit(":", 1)[1]
     _, roles = await _current_user(callback)
     if action == "class":
-        if not roles["manager"]:
+        if not (roles["manager"] or roles["school"] or roles["platform"]):
             await callback.answer("مجوز مدیریت کلاس نداری.", show_alert=True)
             return
         await callback.answer()
