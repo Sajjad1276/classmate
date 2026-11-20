@@ -29,6 +29,22 @@ async def connect_school_group(message: Message, bot: Bot):
     """Consume a one-time startgroup payload and bind this Telegram group to a school."""
     if message.from_user is None or message.text is None:
         return
+    try:
+        bot_member = await bot.get_chat_member(message.chat.id, bot.id)
+        if bot_member.status not in {"administrator", "creator"}:
+            await message.answer("برای اتصال گروه مدرسه، ابتدا ربات را مدیر این گروه کن.")
+            return
+    except Exception:
+        await message.answer("وضعیت مدیریتی ربات در این گروه قابل بررسی نیست. ابتدا ربات را مدیر کن.")
+        return
+    try:
+        actor_member = await bot.get_chat_member(message.chat.id, message.from_user.id)
+        if actor_member.status not in {"administrator", "creator"}:
+            await message.answer("فقط مدیر گروه می‌تواند اتصال گروه مدرسه را انجام دهد.")
+            return
+    except Exception:
+        await message.answer("امکان بررسی دسترسی مدیر گروه وجود ندارد.")
+        return
     payload = message.text.split(maxsplit=1)[1].strip()
 
     async with SessionFactory() as session:
