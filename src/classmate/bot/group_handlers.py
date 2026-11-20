@@ -11,6 +11,11 @@ from classmate.bot.context import _user
 from classmate.db.models import ClassGroup, School
 from classmate.db.session import SessionFactory
 from classmate.services.permissions import hash_code, is_school_admin
+from classmate.services.group_bindings import (
+    lock_group_binding_mutations,
+    is_chat_bound_to_class_group,
+    is_chat_bound_to_school_group,
+)
 
 logger = logging.getLogger(__name__)
 router = Router(name="classmate_groups")
@@ -29,13 +34,14 @@ async def connect_school_group(message: Message, bot: Bot):
     async with SessionFactory() as session:
         async with session.begin():
             actor = await _user(session, message.from_user, private=False)
+            await lock_group_binding_mutations(session)
             now = datetime.now(timezone.utc)
             school = await session.scalar(
                 select(School).where(
                     School.group_link_token_hash == hash_code(payload),
                     School.group_link_token_expires_at > now,
                     School.is_active.is_(True),
-                )
+                ).with_for_update()
             )
             if school is None:
                 await message.answer(
@@ -55,6 +61,9 @@ async def connect_school_group(message: Message, bot: Bot):
             )
             if already_used is not None:
                 await message.answer("این گروه قبلاً به مدرسه دیگری متصل شده است.")
+                return
+            if await is_chat_bound_to_class_group(session, message.chat.id):
+                await message.answer("این گروه قبلاً به یک کلاس متصل شده است و نمی‌تواند گروه اصلی مدرسه باشد.")
                 return
 
             if school.telegram_group_id not in {None, message.chat.id}:
@@ -97,15 +106,25 @@ async def connect_group(message: Message, bot: Bot):
     except Exception:
         await message.answer("امکان بررسی دسترسی مدیر گروه وجود ندارد. دوباره تلاش کن.")
         return
+    try:
+        bot_member = await bot.get_chat_member(message.chat.id, bot.id)
+        if bot_member.status not in {"administrator", "creator"}:
+            await message.answer("برای اتصال کلاس، ابتدا ربات را مدیر همین گروه کن و سپس دوباره تلاش کن.")
+            return
+    except Exception:
+        await message.answer("وضعیت مدیریتی ربات در این گروه قابل بررسی نیست. ابتدا ربات را مدیر کن.")
+        return
+
     async with SessionFactory() as session:
         async with session.begin():
+            await lock_group_binding_mutations(session)
             await _user(session, message.from_user)
             class_group = await session.scalar(
                 select(ClassGroup).where(
                     ClassGroup.group_link_code_hash == hash_code(code),
                     ClassGroup.group_link_code_expires_at > datetime.now(timezone.utc),
                     ClassGroup.is_active.is_(True),
-                )
+                ).with_for_update()
             )
             if class_group is None:
                 await message.answer("کد اتصال نامعتبر یا قبلاً مصرف شده است.")
@@ -118,6 +137,12 @@ async def connect_group(message: Message, bot: Bot):
             )
             if occupied is not None:
                 await message.answer("این گروه قبلاً به کلاس دیگری متصل شده است.")
+                return
+            if await is_chat_bound_to_school_group(session, message.chat.id):
+                await message.answer("این گروه قبلاً گروه اصلی یک مدرسه است و نمی‌تواند به کلاس متصل شود.")
+                return
+            if class_group.group_chat_id not in {None, message.chat.id}:
+                await message.answer("برای این کلاس قبلاً گروه دیگری متصل شده است.")
                 return
             class_group.group_chat_id = message.chat.id
             class_group.group_chat_title = (message.chat.title or "")[:180]
