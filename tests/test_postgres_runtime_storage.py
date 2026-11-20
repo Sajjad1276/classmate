@@ -164,7 +164,7 @@ async def test_cancelled_processing_reminder_is_not_sent_or_reopened(monkeypatch
     database_url = os.getenv("DATABASE_URL")
     if not database_url:
         pytest.skip("DATABASE_URL is required for PostgreSQL reminder cancellation tests")
-    from datetime import date, datetime, timedelta, timezone
+    from datetime import date, datetime, timezone
 
     from classmate.db.models import (
         AcademicYear,
