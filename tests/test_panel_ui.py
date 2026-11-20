@@ -9,6 +9,7 @@ from classmate.bot.keyboards import (
     wizard_cancel_keyboard,
 )
 from classmate.bot.group_handlers import router as group_router
+from classmate.bot.wizard_handlers import router as wizard_router
 from classmate.bot.panel_form_processing import _send_join_retry_message
 from classmate.bot.panel_handlers import (
     _academic_menu_markup,
@@ -213,6 +214,14 @@ def test_panel_router_registers_school_class_selectors():
     assert "management_menu_callback" in callback_names
     assert "home_academic_action" in callback_names
     assert "management_action" in callback_names
+
+
+def test_record_wizard_has_a_back_handler_for_every_input_state():
+    message_handlers = [
+        handler.callback.__name__
+        for handler in wizard_router.observers["message"].handlers
+    ]
+    assert "wizard_back_button" in message_handlers
 
 
 def test_group_menu_exposes_records_but_review_is_role_gated():
