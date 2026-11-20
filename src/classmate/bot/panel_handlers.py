@@ -766,11 +766,7 @@ async def _start_panel_input_from_message(
     parent_id = parent_message_id or data.get("panel_message_id") or message.message_id
     if parent_id:
         try:
-            await bot.edit_message_reply_markup(
-                chat_id=message.chat.id,
-                message_id=parent_id,
-                reply_markup=None,
-            )
+            await bot.delete_message(message.chat.id, parent_id)
         except TelegramBadRequest:
             pass
     await state.set_state(PanelInput.input)
@@ -804,14 +800,17 @@ async def _return_to_panel_parent(
         await message.delete()
     except TelegramBadRequest:
         pass
-    if prompt_id and prompt_id != parent_id:
-        try:
-            await bot.delete_message(message.chat.id, prompt_id)
-        except TelegramBadRequest:
-            pass
     await state.clear()
-    if parent_id:
-        await state.update_data(panel_message_id=parent_id)
+    if parent_kind and prompt_id:
+        # Reuse the prompt message as the destination parent panel, avoiding
+        # an orphaned, buttonless copy of the previous menu.
+        await state.update_data(panel_message_id=prompt_id)
+    else:
+        if prompt_id:
+            try:
+                await bot.delete_message(message.chat.id, prompt_id)
+            except TelegramBadRequest:
+                pass
     if parent_kind == "classes_menu":
         await _show_classes_menu_from_message(message, state, bot)
     elif parent_kind == "academic_menu":
