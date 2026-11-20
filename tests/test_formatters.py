@@ -21,7 +21,8 @@ def test_homework_formatter_caps_items_and_reports_omitted_count():
     assert "Homework 1" in rendered
     assert "Homework 8" in rendered
     assert "Homework 9" not in rendered
-    assert "23 تکلیف دیگر نمایش داده نشد" in rendered
+    assert "بیش از ۳۰ تکلیف پیدا شد" in rendered
+    assert "دست‌کم ۲۳ تکلیف دیگر وجود دارد" in rendered
     assert rendered.count("•") == 8
     assert "\\n" not in rendered
     assert "\n" in rendered
@@ -53,3 +54,22 @@ def test_exam_formatter_caps_items_and_reports_omitted_count():
     assert "\\n" not in rendered
     assert "\n" in rendered
     assert len(rendered.encode("utf-16-le")) // 2 < 3900
+
+
+def test_exam_formatter_reports_lower_bound_when_query_is_overflow_capped():
+    from datetime import datetime, timezone
+
+    rows = [
+        (
+            SimpleNamespace(
+                title=f"Exam {index}",
+                scope="Unit " * 15,
+                scheduled_at=datetime(2026, 12, 1, tzinfo=timezone.utc),
+            ),
+            SimpleNamespace(name="Chemistry"),
+        )
+        for index in range(1, 32)
+    ]
+    rendered = _format_exams(rows, "Asia/Tehran")
+    assert "بیش از ۳۰ امتحان پیدا شد" in rendered
+    assert "دست‌کم ۲۳ امتحان دیگر وجود دارد" in rendered
