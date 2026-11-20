@@ -42,6 +42,7 @@ from classmate.domain.dates import (
 )
 from classmate.services.permissions import (
     get_class_with_school,
+    can_manage_class,
     hash_code,
     is_school_admin,
     make_code,
@@ -475,16 +476,8 @@ async def subject_add_command(message: Message):
                 await message.answer("کلاس مشخص نیست؛ ابتدا گروه را متصل کن یا شناسه کلاس را وارد کن.")
                 return
             class_group, _, school = context
-            membership = await session.scalar(
-                select(ClassMembership).where(
-                    ClassMembership.class_id == class_group.id,
-                    ClassMembership.user_id == user.id,
-                    ClassMembership.role.in_([Role.CLASS_MANAGER, Role.TRUSTED_APPROVER]),
-                    ClassMembership.is_active.is_(True),
-                )
-            )
-            if not await is_school_admin(session, user, school.id) and membership is None:
-                await message.answer("فقط مدیر کلاس یا فرد مورد اعتماد می‌تواند درس اضافه کند.")
+            if not await can_manage_class(session, user, class_group.id):
+                await message.answer("فقط مدیر مدرسه یا مدیر کلاس می‌تواند درس اضافه کند.")
                 return
             if not subject_name:
                 await message.answer("نام درس را وارد کن.")
