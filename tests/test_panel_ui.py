@@ -12,7 +12,6 @@ from classmate.bot.group_handlers import router as group_router
 from classmate.bot.panel_form_processing import _send_join_retry_message
 from classmate.bot.panel_handlers import (
     _is_panel_input_text,
-    _markup,
     _parent_for_form,
     main_button_handler,
     router as panel_router,
