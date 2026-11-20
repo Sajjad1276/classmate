@@ -114,6 +114,69 @@ def _button(text: str, data: str) -> InlineKeyboardButton:
     return InlineKeyboardButton(text=text, callback_data=data)
 
 
+def _classes_menu_markup() -> InlineKeyboardMarkup:
+    return _markup(
+        [
+            [_button("📋 کلاس‌های من", "ui:classes")],
+            [_button("🔑 عضویت در کلاس", "ui:form:join")],
+        ]
+    )
+
+
+def _academic_menu_markup() -> InlineKeyboardMarkup:
+    return _markup(
+        [
+            [_button("📚 تکالیف", "ui:home_action:homework"),
+             _button("📝 امتحانات", "ui:home_action:exams")],
+            [_button("📅 برنامه هفتگی", "ui:home_action:week"),
+             _button("🗒 گزارش امروز", "ui:home_action:today")],
+            [_button("🔎 جست‌وجو", "ui:home_action:ask")],
+        ]
+    )
+
+
+def _management_menu_markup(roles: dict[str, bool]) -> InlineKeyboardMarkup:
+    rows = []
+    if roles["manager"]:
+        rows.append([_button("⚙️ مدیریت کلاس", "ui:manage_action:class")])
+    if roles["school"]:
+        rows.append([_button("🏢 مدیریت مدرسه", "ui:manage_action:school")])
+    if roles["platform"]:
+        rows.append([_button("🛡 پنل مدیر کل", "ui:manage_action:platform")])
+    return _markup(rows)
+
+
+async def _show_classes_menu_from_message(
+    message: Message, state: FSMContext, bot: Bot
+) -> None:
+    await _render_from_message(
+        message, state, bot, "🏫 <b>بخش کلاس‌ها</b>\nکلاس‌های متصل یا عضویت با کد دعوت را انتخاب کن.",
+        _classes_menu_markup(),
+    )
+
+
+async def _show_academic_menu_from_message(
+    message: Message, state: FSMContext, bot: Bot
+) -> None:
+    await _render_from_message(
+        message, state, bot, "📚 <b>امور درسی</b>\nبرای مشاهده اطلاعات، ابتدا بخش موردنظر را انتخاب کن.",
+        _academic_menu_markup(),
+    )
+
+
+async def _show_management_menu_from_message(
+    message: Message, state: FSMContext, bot: Bot
+) -> None:
+    _, roles = await _current_user(message)
+    if not (roles["manager"] or roles["school"] or roles["platform"]):
+        await _render_from_message(message, state, bot, "به بخش مدیریت دسترسی نداری.", _markup([]))
+        return
+    await _render_from_message(
+        message, state, bot, "⚙️ <b>مدیریت</b>\nسطح مدیریتی موردنظر را انتخاب کن.",
+        _management_menu_markup(roles),
+    )
+
+
 async def _render_from_message(
     message: Message,
     state: FSMContext,
