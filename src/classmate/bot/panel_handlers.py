@@ -735,7 +735,7 @@ async def _show_school_panel(callback: CallbackQuery, state: FSMContext) -> None
         if schools
         else "برای این حساب مدرسه فعالی جهت مدیریت ثبت نشده است."
     )
-    await _render_from_callback(callback, state, body, _markup(rows, "ui:close"))
+    await _render_from_callback(callback, state, body, _markup(rows, "ui:management_menu"))
 
 
 async def _show_school_management(
@@ -1182,7 +1182,9 @@ async def close_panel(callback: CallbackQuery, state: FSMContext):
 
 @router.callback_query(F.data == "ui:classes")
 async def classes_panel(callback: CallbackQuery, state: FSMContext):
-    await _show_classes(callback, state, callback.from_user)
+    await _show_classes(
+        callback, state, callback.from_user, back="ui:classes_menu"
+    )
 
 
 @router.callback_query(F.data.startswith("ui:class:"))
