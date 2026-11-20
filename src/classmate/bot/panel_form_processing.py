@@ -55,6 +55,7 @@ async def handle_panel_input(
     data = await state.get_data()
     form_name = data.get("panel_form")
     class_id = data.get("panel_class_id")
+    school_id = data.get("panel_school_id")
     await state.set_state(None)
     if not form_name:
         await render_from_message(message, state, bot, "این فرم دیگر فعال نیست.", markup([]))
@@ -159,8 +160,15 @@ async def handle_panel_input(
                         membership.is_active = True
                     result_text = "✅ مدیر مدرسه تعیین شد."
                 elif form_name == "year_new":
-                    school_raw, year_name = _parse_pipe_args(raw, 2)
-                    school_id = int(school_raw)
+                    if school_id is None:
+                        school_raw, year_name = _parse_pipe_args(raw, 2)
+                        selected_school_id = int(school_raw)
+                    else:
+                        year_name = raw.strip()
+                        selected_school_id = int(school_id)
+                    if not year_name:
+                        raise ValueError("نام سال تحصیلی را وارد کن.")
+                    school_id = selected_school_id
                     if not await is_school_admin(session, actor, school_id):
                         raise PermissionError("مجوز مدیریت این مدرسه را نداری.")
                     school = await session.get(School, school_id)
@@ -189,8 +197,13 @@ async def handle_panel_input(
                     await session.flush()
                     result_text = f"✅ سال تحصیلی جدید فعال شد. شناسه: <code>{year.id}</code>"
                 elif form_name == "class_new":
-                    school_raw, grade, section, name = _parse_pipe_args(raw, 4)
-                    school_id = int(school_raw)
+                    if school_id is None:
+                        school_raw, grade, section, name = _parse_pipe_args(raw, 4)
+                        selected_school_id = int(school_raw)
+                    else:
+                        grade, section, name = _parse_pipe_args(raw, 3)
+                        selected_school_id = int(school_id)
+                    school_id = selected_school_id
                     school = await session.get(School, school_id)
                     if not school or not await is_school_admin(session, actor, school_id):
                         raise PermissionError("مدرسه پیدا نشد یا مجوز مدیریت آن را نداری.")
@@ -213,8 +226,13 @@ async def handle_panel_input(
                     session.add(ClassMembership(class_id=item.id, user_id=actor.id, role=Role.CLASS_MANAGER))
                     result_text = f"✅ کلاس ایجاد شد. شناسه کلاس: <code>{item.id}</code>"
                 elif form_name == "class_manager_add":
-                    class_raw, telegram_raw = _parse_pipe_args(raw, 2)
-                    target_class_id, telegram_id = int(class_raw), int(telegram_raw)
+                    if class_id is None:
+                        class_raw, telegram_raw = _parse_pipe_args(raw, 2)
+                        target_class_id = int(class_raw)
+                    else:
+                        target_class_id = int(class_id)
+                        telegram_raw = raw.strip()
+                    telegram_id = int(telegram_raw)
                     context = await get_class_with_school(session, target_class_id)
                     target = await session.scalar(select(User).where(User.telegram_id == telegram_id))
                     if not context or not target:
@@ -345,11 +363,13 @@ async def handle_panel_input(
                     )
                 else:
                     raise ValueError("این فرم شناخته نشده است.")
-        await state.update_data(panel_form=None, school_name=None)
+        await state.update_data(panel_form=None, panel_school_id=None, school_name=None)
         if form_name == "join":
             back = "ui:classes"
         elif class_id:
             back = f"ui:manage:{class_id}"
+        elif school_id:
+            back = f"ui:school_manage:{school_id}"
         elif form_name in {"school_new", "school_admin_add"}:
             back = "ui:platform"
         else:
