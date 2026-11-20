@@ -37,28 +37,42 @@ async def _pending_message(
 def _format_homework(rows) -> str:
     if not rows:
         return "هنوز تکلیف تأییدشده‌ای ثبت نشده است."
-    overflow = len(rows) > 30
-    visible_rows = rows[:30]
+    visible_rows = rows[:8]
+    omitted = max(0, len(rows) - len(visible_rows))
     lines = ["📚 <b>تکالیف تأییدشده</b>"]
-    if overflow:
-        lines.append("<i>بیش از ۳۰ تکلیف ثبت شده؛ ۳۰ مورد نخست نمایش داده شده‌اند.</i>")
     for homework, subject in visible_rows:
         due = jalali_date(homework.due_on) if homework.due_on else "نامشخص"
+        title = escape((homework.title or "")[:60])
+        subject_name = escape((subject.name or "")[:50])
+        description = (homework.description or "")[:140]
+        if homework.description and len(homework.description) > 140:
+            description += "…"
         lines.append(
-            f"\n• <b>{escape(subject.name)}</b> — {escape(homework.title)}\n"
-            f"  {escape(homework.description)}\n  موعد: {due}"
+            f"\\n• <b>{subject_name}</b> — {title}\\n"
+            f"  {escape(description)}\\n  موعد: {due}"
         )
-    return "\n".join(lines)
+    if omitted:
+        lines.append(f"\\nℹ️ {omitted} تکلیف دیگر نمایش داده نشد.")
+    return "\\n".join(lines)
 
 
 def _format_exams(rows, timezone_name: str) -> str:
     if not rows:
         return "امتحان آینده‌ای ثبت نشده است."
+    visible_rows = rows[:8]
+    omitted = max(0, len(rows) - len(visible_rows))
     lines = ["📝 <b>امتحانات تأییدشده</b>"]
-    for exam, subject in rows:
+    for exam, subject in visible_rows:
+        title = escape((exam.title or "")[:60])
+        subject_name = escape((subject.name or "")[:50])
+        scope = (exam.scope or "اعلام نشده")[:100]
+        if exam.scope and len(exam.scope) > 100:
+            scope += "…"
         lines.append(
-            f"\n• <b>{escape(subject.name)}</b> — {escape(exam.title)}\n"
-            f"  محدوده: {escape(exam.scope or 'اعلام نشده')}\n"
+            f"\\n• <b>{subject_name}</b> — {title}\\n"
+            f"  محدوده: {escape(scope)}\\n"
             f"  زمان: {jalali_datetime(exam.scheduled_at, timezone_name)}"
         )
-    return "\n".join(lines)
+    if omitted:
+        lines.append(f"\\nℹ️ {omitted} امتحان دیگر نمایش داده نشد.")
+    return "\\n".join(lines)
