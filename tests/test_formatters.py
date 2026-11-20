@@ -23,6 +23,8 @@ def test_homework_formatter_caps_items_and_reports_omitted_count():
     assert "Homework 9" not in rendered
     assert "23 تکلیف دیگر نمایش داده نشد" in rendered
     assert rendered.count("•") == 8
+    assert "\\n" not in rendered
+    assert "\n" in rendered
     assert len(rendered.encode("utf-16-le")) // 2 < 3900
 
 
@@ -48,4 +50,6 @@ def test_exam_formatter_caps_items_and_reports_omitted_count():
     assert "Exam 8" in rendered
     assert "Exam 9" not in rendered
     assert "7 امتحان دیگر نمایش داده نشد" in rendered
+    assert "\\n" not in rendered
+    assert "\n" in rendered
     assert len(rendered.encode("utf-16-le")) // 2 < 3900
