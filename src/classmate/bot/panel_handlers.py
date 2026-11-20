@@ -982,7 +982,7 @@ async def _show_form(
     class_id: int | None = None,
     school_id: int | None = None,
 ) -> None:
-    user, roles = await _current_user(callback)
+    _, roles = await _current_user(callback)
     prompts = {
         "join": "کد دعوت کلاس را وارد کن.",
         "school_new": "نام مدرسه را وارد کن.",
@@ -1021,6 +1021,7 @@ async def _show_form(
             await callback.answer("کلاس انتخاب‌شده پیدا نشد یا دسترسی نداری.", show_alert=True)
             return
         permitted[form_name] = context["is_school_admin"] or context["is_platform_admin"]
+        school_id = context["school"].id
     if form_name in {"class_code", "approver_add", "subject_add", "timetable_set"}:
         context = await _class_context(class_id or 0, callback.from_user)
         if not context:
@@ -1041,8 +1042,8 @@ async def _show_form(
     parent_kind = (
         "classes_menu" if form_name == "join"
         else "class_panel" if form_name == "search"
+        else "school_manage" if form_name == "class_manager_add" or school_id is not None
         else "class_manage" if class_id is not None
-        else "school_manage" if school_id is not None
         else "platform" if form_name in {"school_new", "school_admin_add"}
         else "management_menu"
     )
