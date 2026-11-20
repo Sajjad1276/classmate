@@ -217,7 +217,7 @@ async def test_cancelled_processing_reminder_is_not_sent_or_reopened(monkeypatch
                 )
                 session.add(job)
                 await session.flush()
-                job_id, homework_id, class_id = job.id, homework.id, class_group.id
+                job_id, homework_id = job.id, homework.id
         async with factory() as session:
             async with session.begin():
                 homework = await session.get(Homework, homework_id)
