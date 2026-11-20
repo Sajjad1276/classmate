@@ -115,3 +115,45 @@ async def test_postgres_worker_marks_ambiguous_delivery_uncertain(monkeypatch):
                 if school_id is not None:
                     await session.execute(delete(School).where(School.id == school_id))
         await engine.dispose()
+
+
+@pytest.mark.asyncio
+async def test_postgres_polling_lock_serializes_bot_instances():
+    database_url = os.getenv("DATABASE_URL")
+    if not database_url:
+        pytest.skip("DATABASE_URL is required for PostgreSQL polling-lock integration tests")
+    from sqlalchemy import text
+
+    from classmate.db.polling_lock import (
+        POLLING_LOCK_KEY,
+        acquire_polling_lock,
+        release_polling_lock,
+    )
+
+    engine = create_async_engine(database_url)
+    first_connection = await acquire_polling_lock(engine)
+    second_connection = await engine.connect()
+    try:
+        locked = await second_connection.scalar(
+            text("SELECT pg_try_advisory_lock(:lock_key)"),
+            {"lock_key": POLLING_LOCK_KEY},
+        )
+        await second_connection.commit()
+        assert locked is False
+
+        await release_polling_lock(first_connection)
+        acquired = await second_connection.scalar(
+            text("SELECT pg_try_advisory_lock(:lock_key)"),
+            {"lock_key": POLLING_LOCK_KEY},
+        )
+        await second_connection.commit()
+        assert acquired is True
+        unlocked = await second_connection.scalar(
+            text("SELECT pg_advisory_unlock(:lock_key)"),
+            {"lock_key": POLLING_LOCK_KEY},
+        )
+        await second_connection.commit()
+        assert unlocked is True
+    finally:
+        await second_connection.close()
+        await engine.dispose()
