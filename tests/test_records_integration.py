@@ -294,3 +294,19 @@ async def test_multiple_daily_reports_can_be_submitted_for_one_class_date(db_ses
     results = await list_reports(db_session, class_group.id, report_day)
     assert {item.id for item in results} == {first.id, second.id}
     assert {item.body for item in results} == {"گزارش زنگ اول", "گزارش زنگ دوم"}
+
+
+@pytest.mark.asyncio
+async def test_group_chat_cannot_be_bound_as_both_class_and_school_group(db_session):
+    from classmate.services.group_bindings import (
+        is_chat_bound_to_class_group,
+        is_chat_bound_to_school_group,
+    )
+
+    school, class_group, creator, approver, subject = await _seed_class(db_session)
+    school.telegram_group_id = -1001234567890
+    class_group.group_chat_id = -1001234567891
+    assert await is_chat_bound_to_school_group(db_session, -1001234567890)
+    assert not await is_chat_bound_to_class_group(db_session, -1001234567890)
+    assert await is_chat_bound_to_class_group(db_session, -1001234567891)
+    assert not await is_chat_bound_to_school_group(db_session, -1001234567891)
