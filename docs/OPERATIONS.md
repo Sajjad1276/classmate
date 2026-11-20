@@ -21,9 +21,9 @@ The bootstrap list is only for the first platform-admin setup. Keep it limited t
 
 ## Group onboarding and supported commands
 
-A central school group is linked using the one-time Telegram startgroup link from the school panel. A class group is linked by a Telegram group administrator running /connect <code> inside that group; the code expires after 30 minutes and is consumed on success. Both the command issuer and the bot must be Telegram administrators in that group. A Telegram chat cannot be bound as both a school and class group. Group-binding changes are serialized in PostgreSQL. The private UI is button-driven. Group support currently uses addressed commands rather than a dedicated inline dashboard.
+A central school group is linked using the one-time Telegram startgroup link from the school panel. A class group is linked by a Telegram group administrator running /connect <code> inside that group; the code expires after 30 minutes and is consumed on success. Both the command issuer and the bot must be Telegram administrators in that group. A Telegram chat cannot be bound as both a school and class group. Group-binding changes are serialized in PostgreSQL. The private UI is button-driven. After /start in a linked class group, the bot displays an inline class dashboard: approved homework and exams, the currently valid weekly timetable, today's approved report/homework/exam summary and buttons to start new submissions. The review-queue button is only displayed to approvers; its callback rechecks class permission server-side.
 
-In linked groups, supported commands include /homework, /exams, /today, /week, /ask <question>, /subject_add, /timetable_set, /pending and /cancel_record (authorization is checked server-side). The inline group dashboard, broadcast tools and automatic ingestion of arbitrary messages are not implemented. Keep Telegram Privacy Mode enabled.
+The /connect command binds a class group, while /homework, /exams, /today, /week, /pending and /cancel_record remain supported command fallbacks. Broadcast tools and automatic ingestion of arbitrary messages are not implemented. Keep Telegram Privacy Mode enabled.
 
 ## Routine checks
 
