@@ -1146,6 +1146,11 @@ async def main_button_handler(message: Message, state: FSMContext, bot: Bot) -> 
     label = (message.text or "").strip()
     saved = await state.get_data()
     panel_message_id = saved.get("panel_message_id")
+    if label == "⬅️ بازگشت" and (
+        saved.get("panel_form") or saved.get("panel_parent_kind")
+    ):
+        await _return_to_panel_parent(message, state, bot, saved)
+        return
     await state.clear()
     if panel_message_id is not None:
         await state.update_data(panel_message_id=panel_message_id)
