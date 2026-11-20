@@ -19,9 +19,11 @@ The bootstrap list is only for the first platform-admin setup. Keep it limited t
 4. Students use **ثبت اطلاعات** to submit homework, exams and daily reports.
 5. Trusted approvers use **صف بررسی** to approve/reject submissions.
 
-## Group onboarding status
+## Group onboarding and supported commands
 
-Private-chat navigation is button-driven. Group activities and the group-specific button panel are the next implementation phase; this runbook does not treat old slash-command group handlers as a completed group interface. Keep Telegram Privacy Mode enabled. Do not rely on arbitrary group-message reading.
+A central school group is linked using the one-time Telegram startgroup link from the school panel. A class group is linked by a Telegram group administrator running /connect <code> inside that group; the code expires after 30 minutes and is consumed on success. The private UI is button-driven. Group support currently uses addressed commands rather than a dedicated inline dashboard.
+
+In linked groups, supported commands include /homework, /exams, /today, /week, /ask <question>, /subject_add, /timetable_set, /pending and /cancel_record (authorization is checked server-side). The inline group dashboard, broadcast tools and automatic ingestion of arbitrary messages are not implemented. Keep Telegram Privacy Mode enabled.
 
 ## Routine checks
 
@@ -52,7 +54,7 @@ Class managers, school administrators and platform administrators can soft-delet
 
 ## Approved-record cancellation
 
-Users who can approve class records (class manager, trusted approver, school administrator or platform administrator) can cancel an approved record using `/cancel_record <class_id> homework|exam|report <record_id>` in private chat, or `/cancel_record homework|exam|report <record_id>` in its connected group. Cancellation changes the record status, records an audit/approval event and cancels reminders that have not started processing.
+Users who can approve class records (class manager, trusted approver, school administrator or platform administrator) can cancel an approved record using `/cancel_record <class_id> homework|exam|report <record_id>` in private chat, or `/cancel_record homework|exam|report <record_id>` in its connected group. Cancellation changes the record status, records an audit/approval event and cancels queued, retrying, processing and uncertain reminders. The worker re-checks the source record immediately before delivery; a Telegram request that has already started or been accepted cannot be recalled.
 
 ## Reminder delivery reconciliation
 
@@ -62,4 +64,13 @@ A platform administrator can list ambiguous jobs with `/reminder_uncertain`, the
 
 ## Migration rollback policy
 
-Migration `0001_initial` no longer drops the complete schema on downgrade. Migrations `0003_reliability_state` and `0004_daily_report_cancelled_at` also refuse automatic downgrade because doing so would discard live conversation state, update history or cancellation history. For recovery, take/restore a verified database backup or write a reviewed forward migration; do not issue `alembic downgrade base` against production.
+Migration `0001_initial` no longer drops the complete schema on downgrade. Migrations `0003_reliability_state` and `0004_daily_report_cancelled_at` refuse automatic downgrade because doing so would discard live conversation state, update history or cancellation history. Migration `0005_daily_report_multi_submit` refuses downgrade while duplicate class/date reports exist; once the data is consolidated, it can restore the old unique constraint. For recovery, take/restore a verified database backup or write a reviewed forward migration; do not issue `alembic downgrade base` against production.
+
+
+## Telegram polling singleton
+
+The bot holds a PostgreSQL session-level advisory lock for the lifetime of long polling. During Railway rolling deploys, a new container waits for the old poller to release its lock instead of issuing a competing getUpdates call. Keep the lock-owning PostgreSQL connection stable; if it is lost, PostgreSQL releases the lock.
+
+## Daily reports
+
+More than one daily report is allowed for the same class/date. Reports are individually reviewed and audited; do not assume one report row per day when writing exports or summaries.
