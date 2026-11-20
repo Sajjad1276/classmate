@@ -8,10 +8,9 @@ from aiogram.filters import Command
 from aiogram.types import CallbackQuery, Message
 from sqlalchemy import or_, select
 
-from classmate.bot.context import _user
+from classmate.bot.context import WEEKDAYS, _user
 from classmate.db.models import ClassGroup, School, Subject, TimetableEntry
 from classmate.db.session import SessionFactory
-from classmate.bot.context import WEEKDAYS
 from classmate.bot.formatters import _format_exams, _format_homework
 from classmate.bot.keyboards import approval_keyboard
 from classmate.domain.dates import jalali_date
