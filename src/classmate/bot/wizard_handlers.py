@@ -7,7 +7,7 @@ from aiogram.fsm.context import FSMContext
 from aiogram.types import CallbackQuery, Message
 from sqlalchemy import select
 
-from classmate.bot.handlers import (
+from classmate.bot.context import (
     _classes_for_user,
     _ensure_group_member,
     _main_keyboard_for_user,
